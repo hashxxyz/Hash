@@ -6,11 +6,23 @@ import requests
 
 class handler(BaseHTTPRequestHandler):
 
+    def send_telegram(self, chat_id, text):
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text[:4000]
+            },
+            timeout=30
+        )
+
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"Football AI Orchestrator is LIVE")
+        self.wfile.write(b"NEW ORCHESTRATOR CODE IS LIVE")
 
     def do_POST(self):
         try:
@@ -25,38 +37,57 @@ class handler(BaseHTTPRequestHandler):
             if not chat_id:
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b"ok")
                 return
 
             if text.startswith("/start"):
                 reply = (
-                    "⚽ Football AI Orchestrator\n\n"
-                    "Bot is connected successfully! 🔥\n\n"
-                    "Use /newvideo <football event or idea> to start."
+                    "🔥 NEW ORCHESTRATOR CODE IS LIVE!\n\n"
+                    "Telegram → Vercel connection is working.\n\n"
+                    "Pipeline is ready for testing."
                 )
+
             elif text.startswith("/newvideo"):
-                reply = "🧠 AI pipeline is being connected. /newvideo will be available soon."
+                idea = text[len("/newvideo"):].strip()
+
+                if not idea:
+                    reply = "Use:\n/newvideo <football event or idea>"
+                else:
+                    reply = "🧠 PIPELINE TEST RECEIVED!\n\nIdea:\n" + idea
+
+                    # Import pipeline only when needed
+                    try:
+                        from pipeline import run_pipeline
+
+                        self.send_telegram(
+                            chat_id,
+                            "🧠 Working on it...\n\n"
+                            "Gemini → Creative → Production"
+                        )
+
+                        reply = run_pipeline(idea)
+
+                    except Exception as e:
+                        reply = (
+                            "❌ PIPELINE ERROR\n\n"
+                            + str(e)
+                        )
+
             else:
-                reply = "Use /start or /newvideo <football event or idea>"
+                reply = (
+                    "⚽ Football AI Orchestrator\n\n"
+                    "Use:\n"
+                    "/start\n"
+                    "/newvideo <football event or idea>"
+                )
 
-            token = os.environ.get("TELEGRAM_BOT_TOKEN")
-
-            requests.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": reply
-                },
-                timeout=20
-            )
+            self.send_telegram(chat_id, reply)
 
             self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"ok")
 
         except Exception as e:
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain")
+            print("ERROR:", str(e))
+
+            self.send_response(200)
             self.end_headers()
-            self.wfile.write(str(e).encode("utf-8"))
+
