@@ -5,153 +5,124 @@ def run_pipeline(idea):
 
     research = gemini(
         f"""
-You are the FOOTBALL RESEARCH & TREND AGENT.
+You are the FOOTBALL EVENT RESEARCH AGENT.
 
 Analyze this football topic:
 
 {idea}
 
-Your job is NOT to write a cartoon story.
+Your job is to find the usable football situation, NOT write a story.
 
-Find the most useful REAL football situation behind the topic.
-
-OUTPUT:
+Return ONLY:
 
 EVENT
-- What actually happened?
+What actually happened?
 
-KEY PEOPLE
-- Which real players, coaches, teams or officials are involved?
+PEOPLE
+Which real players/teams/coaches are involved?
 
-FACTS
-- 3-6 concise verified facts.
+KEY FACTS
+Only the facts needed to understand the situation.
 
-CURRENT CONTEXT
-- Why is this relevant or funny right now?
-
-POSSIBLE SITUATIONS
-Give 3 different real situations that could become a short
-football cartoon.
-
-For each situation:
-- Situation
-- People involved
-- What makes it visually funny
-- What part is fact
-- What part would be fictional exaggeration
+FUNNY OPPORTUNITIES
+List 3-5 things about this situation that could become visual comedy.
 
 IMPORTANT:
-Do not invent events.
-Do not turn the answer into a documentary.
-Do not force historical information if the topic has a more
-interesting current situation.
+Do not write a script.
+Do not write narration.
+Do not create fantasy characters.
+Do not give a long historical explanation.
+Do not invent facts.
+
+Keep it concise.
 """
-        .strip()
     )
 
     creative = openrouter(
         f"""
-You are the CREATIVE DIRECTOR of an ORIGINAL football cartoon channel.
+You are the COMEDY DIRECTOR for an original football cartoon channel.
 
-Your task is to create a short football cartoon concept inspired by
-the HIGH-LEVEL FORMAT of short football situation cartoons.
+Use the football research below.
 
-DO NOT copy Hamid Sahari's characters, drawings, scripts, jokes,
-specific scenes, animation style, music or trademarks.
+Your job is NOT to write a story.
 
-Instead use the following storytelling characteristics:
+Create ONE strong short-form football comedy concept.
 
-- A recognizable real football situation
-- One simple comedic premise
-- Real football personalities as characters when relevant
-- Exaggerated physical reactions
-- Visual storytelling
-- Very little dialogue
-- Fast escalation
-- A clear visual payoff
-- Usually 20-60 seconds
-- The situation should be understandable immediately
+The format should be:
+
+REAL FOOTBALL SITUATION
+→ SIMPLE FUNNY IDEA
+→ PHYSICAL/ VISUAL COMEDY
+→ ESCALATION
+→ PUNCHLINE
+
+The concept should feel like a short football cartoon situation:
+fast, visual, exaggerated and easy to understand.
+
+Do NOT copy Hamid Sahari's actual jokes, scripts, scenes,
+characters or artwork. We are building our own original channel.
 
 IMPORTANT:
 
-Do NOT create:
-- fantasy kingdoms
-- random chefs
-- ghosts
-- statues
-- generic national stereotypes
-- long historical documentaries
-- complicated multi-act stories
+- One main situation.
+- One main joke.
+- Real football players when relevant.
+- Exaggerated cartoon actions.
+- Minimal dialogue.
+- Visual comedy first.
+- No long story.
+- No narration-heavy explanation.
+- No fantasy worlds.
+- No unnecessary characters.
+- No generic national stereotypes.
+- Prefer reusable football assets.
+- Target 20-60 seconds.
 
-unless the specific football joke genuinely requires them.
+OUTPUT EXACTLY:
 
-The characters should behave like exaggerated cartoon versions
-of the real football situation.
+🎯 COMEDY CONCEPT
 
-The comedy should come from WHAT THE PLAYER IS DOING,
-not from inventing an unrelated personality.
+TITLE:
+Short title.
 
-STRUCTURE:
+REAL SITUATION:
+One or two sentences.
 
-1. PREMISE
-One sentence describing the funny situation.
+COMEDY PREMISE:
+One sentence explaining the joke.
 
-2. HOOK
-What the viewer sees in the first 1-3 seconds.
+CHARACTERS:
+Only characters needed.
 
-3. SETUP
-Establish the real football situation.
+VISUAL GAG:
+What the viewer actually sees.
 
-4. ESCALATION
-The situation becomes increasingly ridiculous.
+ESCALATION:
+How the joke gets increasingly ridiculous.
 
-5. PAYOFF
-One strong visual/comedic ending.
+PUNCHLINE:
+The final visual/comedic payoff.
 
-6. OPTIONAL DIALOGUE
-Only if genuinely necessary.
+RUNTIME:
+Estimated seconds.
 
-7. VISUAL GAGS
-List the physical/cartoon actions that make the joke work.
+🎬 ACTION SEQUENCE
 
-8. CHARACTERS
-Only the characters actually needed.
+1.
+2.
+3.
+4.
+5.
+6.
 
-9. ENVIRONMENT
-Keep it simple and reusable.
+Each action should describe WHAT WE SEE and WHAT THE
+CHARACTER DOES.
 
-10. RUNTIME
-Prefer 20-60 seconds.
-
-Then produce:
-
-SHOT-BY-SHOT BLUEPRINT
-
-For every shot:
-
-SHOT
-TIME
-WHAT WE SEE
-CHARACTER ACTION
-FACIAL EXPRESSION
-CAMERA
-DIALOGUE
-SFX
-COMEDIC PURPOSE
-
-Keep the number of shots practical.
-
-Separate clearly:
-
-REAL FOOTBALL FACT
-COMEDIC EXAGGERATION
-FICTIONAL ACTION
+Do not write paragraphs of story.
 
 RESEARCH:
-
 {research}
 """
-        .strip()
     )
 
     production = groq(
@@ -159,32 +130,50 @@ RESEARCH:
 You are the PRODUCTION DIRECTOR for a reusable
 Blender 5.2 Grease Pencil football-cartoon system.
 
-Convert the creative concept into a production-ready blueprint.
+Convert the comedy concept into an animation blueprint.
 
 DO NOT rewrite the joke.
-DO NOT create a different story.
+DO NOT add a new story.
+DO NOT add unnecessary characters.
 
-Preserve the exact comedic premise.
+Your job is to tell the animator exactly what needs to be built
+and animated.
 
-TARGET:
-20-60 seconds.
+OUTPUT:
 
-For every shot provide:
+🎬 PRODUCTION BLUEPRINT
 
-SHOT ID
-START
-END
-DURATION
-CAMERA
-ENVIRONMENT
-CHARACTERS
-ACTION
-EXPRESSION
-PROP
-ANIMATION
-DIALOGUE/SFX
+RUNTIME:
 
-CAMERA PRESETS:
+CHARACTERS:
+List characters required.
+
+REUSABLE ASSETS:
+Characters, actions, expressions, props and environments
+that can come from the existing library.
+
+NEW ASSETS:
+Only things that must be created specifically for this video.
+
+ENVIRONMENT:
+
+PROPS:
+
+🎥 SHOT LIST
+
+For every shot:
+
+SHOT:
+TIME:
+CAMERA:
+CHARACTER:
+ACTION:
+EXPRESSION:
+PROP:
+DIALOGUE/SFX:
+PURPOSE:
+
+Use these camera presets when useful:
 
 CAM_WIDE
 CAM_MED
@@ -195,53 +184,42 @@ CAM_TRACK
 CAM_PUSH
 CAM_REACTION
 
-Prioritize reusable assets.
+🎭 ANIMATION REQUIREMENTS
 
-Separate:
+List the exact actions needed.
 
-REUSABLE CHARACTERS
-REUSABLE ACTIONS
-REUSABLE EXPRESSIONS
-REUSABLE ENVIRONMENTS
-REUSABLE PROPS
+😀 EXPRESSIONS
 
-NEW ASSETS REQUIRED
+List the expressions needed.
 
-ANIMATION LIBRARY GAPS
+🔊 AUDIO
 
-PRODUCTION RISKS
+List dialogue/SFX/music cues only.
 
-BLENDER IMPLEMENTATION
+⚠️ PRODUCTION NOTES
 
-The production should be achievable by a small creator using
-2D Grease Pencil characters.
+Mention anything difficult, reusable or important for Blender.
 
-Avoid unnecessary new assets.
+Keep the answer practical.
+This is a production blueprint, NOT a story.
 
-CREATIVE CONCEPT:
+COMEDY CONCEPT:
 
 {creative}
 """
-        .strip()
     )
 
     return f"""
 ⚽ FOOTBALL CARTOON PRODUCTION BRIEF
 
 ━━━━━━━━━━━━━━━━━━
-🟢 RESEARCH / REAL EVENT
-━━━━━━━━━━━━━━━━━━
-
-{research}
-
-━━━━━━━━━━━━━━━━━━
-🟠 CREATIVE / COMEDIC PREMISE
+🟠 COMEDY CONCEPT
 ━━━━━━━━━━━━━━━━━━
 
 {creative}
 
 ━━━━━━━━━━━━━━━━━━
-🔵 BLENDER / PRODUCTION
+🔵 PRODUCTION BLUEPRINT
 ━━━━━━━━━━━━━━━━━━
 
 {production}
