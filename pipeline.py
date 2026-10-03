@@ -1,7 +1,96 @@
-from agents import call_gemini, call_openrouter, call_groq
+from agents import gemini, openrouter, groq
+
 
 def run_pipeline(idea):
-    research=call_gemini("You are the football research agent. Analyze this event/idea. Return verified facts, uncertainty, and visual hooks. Keep it concise.\n\n"+idea)
-    creative=call_openrouter("You are the football comedy creative director. Turn the research below into a short event-first football cartoon concept. Separate facts from comedic fiction. Include hook, 2-4 beats, visual gag, punchline, cast, environment, and approximate runtime.\n\nRESEARCH:\n"+research)
-    production=call_groq("You are the Blender production director. Convert this concept into a practical Blender/Grease Pencil production brief. Specify reusable/new assets, characters, actions, expressions, environment, props, camera shots, timing, and production risks. Do not rewrite the joke.\n\n"+creative)
-    return "⚽ FINAL PRODUCTION BRIEF\n\nRESEARCH:\n"+research[:2500]+"\n\nCREATIVE:\n"+creative[:5000]+"\n\nPRODUCTION:\n"+production[:6000]
+
+    research = gemini(
+        f"""
+You are the football research agent.
+
+Analyze this football video idea:
+
+{idea}
+
+Give:
+1. Verified football facts
+2. What is uncertain
+3. Useful visual/comedy hooks
+
+Keep it concise.
+"""
+    )
+
+    creative = openrouter(
+        f"""
+You are the creative director for an original football cartoon channel.
+
+Turn this research into a short, funny, event-first football cartoon.
+
+Separate:
+FACTS
+COMEDIC INTERPRETATION
+FICTIONAL ACTION
+
+Include:
+- Hook
+- 2-4 beats
+- Visual gag
+- Escalation
+- Punchline
+- Characters
+- Environment
+- Approximate runtime
+
+RESEARCH:
+
+{research}
+"""
+    )
+
+    production = groq(
+        f"""
+You are the production director.
+
+Turn this concept into a practical Blender/Grease Pencil production brief.
+
+Include:
+- Characters
+- Actions
+- Expressions
+- Props
+- Environment
+- Camera shots
+- Timing
+- Reusable assets
+- New assets
+- Production risks
+
+Do not rewrite the comedy.
+
+CONCEPT:
+
+{creative}
+"""
+    )
+
+    return f"""
+⚽ FINAL FOOTBALL CARTOON BRIEF
+
+━━━━━━━━━━━━━━
+🟢 RESEARCH
+━━━━━━━━━━━━━━
+
+{research}
+
+━━━━━━━━━━━━━━
+🟠 CREATIVE
+━━━━━━━━━━━━━━
+
+{creative}
+
+━━━━━━━━━━━━━━
+🔵 PRODUCTION
+━━━━━━━━━━━━━━
+
+{production}
+"""
