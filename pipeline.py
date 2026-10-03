@@ -3,211 +3,308 @@ from agents import gemini, openrouter, groq
 
 def run_pipeline(idea):
 
+    # =========================================================
+    # 1. RESEARCH AGENT
+    # =========================================================
+
     research = gemini(
         f"""
-You are the FOOTBALL EVENT RESEARCH AGENT.
+You are the FOOTBALL FACT-CHECKING AGENT.
 
-Analyze this football topic:
-
+USER REQUEST:
 {idea}
 
-Your job is to find the usable football situation, NOT write a story.
+Your ONLY job is to identify the EXACT football event the user is referring to
+and provide verified facts about that event.
 
-Return ONLY:
+IMPORTANT DATE / EVENT RULES:
 
-EVENT
-What actually happened?
+1. If the user says "recent", "recently", "today", "yesterday",
+   "two days ago", "latest", "last match", etc., find the most recent
+   relevant football event.
 
-PEOPLE
-Which real players/teams/coaches are involved?
+2. If the user names two teams, such as "France vs Italy",
+   identify the most recent match between those teams unless the user
+   explicitly gives another date or competition.
 
-KEY FACTS
-Only the facts needed to understand the situation.
+3. NEVER substitute an older famous match just because it has more
+   information available.
 
-FUNNY OPPORTUNITIES
-List 3-5 things about this situation that could become visual comedy.
+4. The date of the event MUST be included.
 
-IMPORTANT:
-Do not write a script.
-Do not write narration.
-Do not create fantasy characters.
-Do not give a long historical explanation.
-Do not invent facts.
+5. Verify the score, goals, scorers, cards and other important events
+   before using them.
 
-Keep it concise.
+6. If you cannot confidently identify the exact event, say:
+   "EVENT UNCERTAIN"
+   and explain what information is missing.
+
+7. NEVER invent facts.
+
+8. Do NOT write a story.
+9. Do NOT create comedy.
+10. Do NOT suggest cartoon scenes.
+
+RETURN ONLY THIS:
+
+EVENT:
+[exact match/event]
+
+DATE:
+[date]
+
+COMPETITION:
+[competition]
+
+FINAL SCORE:
+[score]
+
+KEY FACTS:
+- [fact]
+- [fact]
+- [fact]
+- [fact]
+- [fact]
+
+IMPORTANT PLAYERS:
+- [player]
+- [player]
+
+POTENTIAL COMEDY HOOKS:
+- [short visual opportunity]
+- [short visual opportunity]
+- [short visual opportunity]
+
+FACT CONFIDENCE:
+[HIGH / MEDIUM / LOW]
+
+FACTS MUST BE ACCURATE.
 """
+
+
     )
+
+    # =========================================================
+    # 2. COMEDY AGENT
+    # =========================================================
 
     creative = openrouter(
         f"""
 You are the COMEDY DIRECTOR for an original football cartoon channel.
 
-Use the football research below.
+Create ONE short football-cartoon concept from the VERIFIED RESEARCH below.
 
-Your job is NOT to write a story.
+This is NOT a story-writing task.
 
-Create ONE strong short-form football comedy concept.
+The format is:
 
-The format should be:
-
-REAL FOOTBALL SITUATION
-→ SIMPLE FUNNY IDEA
-→ PHYSICAL/ VISUAL COMEDY
+REAL FOOTBALL EVENT
+→ FUNNY ANGLE
+→ VISUAL GAG
 → ESCALATION
 → PUNCHLINE
 
-The concept should feel like a short football cartoon situation:
-fast, visual, exaggerated and easy to understand.
+STYLE:
 
-Do NOT copy Hamid Sahari's actual jokes, scripts, scenes,
-characters or artwork. We are building our own original channel.
+- Fast
+- Visual
+- Physical comedy
+- Easy to understand
+- Exaggerated cartoon reactions
+- Minimal dialogue
+- One main joke
+- 20–60 seconds
+- Simple football environments
+- Reusable characters and assets
+- Current/recent football situation when provided
 
-IMPORTANT:
+IMPORTANT FACT RULE:
 
-- One main situation.
-- One main joke.
-- Real football players when relevant.
-- Exaggerated cartoon actions.
-- Minimal dialogue.
-- Visual comedy first.
-- No long story.
-- No narration-heavy explanation.
-- No fantasy worlds.
-- No unnecessary characters.
-- No generic national stereotypes.
-- Prefer reusable football assets.
-- Target 20-60 seconds.
+The RESEARCH section is the FACT LOCK.
 
-OUTPUT EXACTLY:
+You MUST NOT change:
+
+- match
+- date
+- competition
+- score
+- scorer
+- player
+- goal
+- card
+- result
+- real match event
+
+You MAY exaggerate the VERIFIED EVENT for cartoon comedy.
+
+Example:
+
+FACT:
+A player scored.
+
+ALLOWED:
+The cartoon player celebrates ridiculously.
+
+NOT ALLOWED:
+Claiming another player scored when they did not.
+
+Do not invent a different match.
+
+Do not use historical information unless it is directly relevant
+to the researched event.
+
+Do not write narration.
+
+Do not write a long explanation.
+
+Do not create a multi-act story.
+
+Do not introduce unnecessary characters.
+
+RETURN EXACTLY:
 
 🎯 COMEDY CONCEPT
 
 TITLE:
-Short title.
+[short title]
 
-REAL SITUATION:
-One or two sentences.
+REAL EVENT:
+[one sentence]
 
 COMEDY PREMISE:
-One sentence explaining the joke.
+[one sentence]
 
 CHARACTERS:
-Only characters needed.
+[only necessary characters]
 
 VISUAL GAG:
-What the viewer actually sees.
+[what we see]
 
 ESCALATION:
-How the joke gets increasingly ridiculous.
+[2–3 short escalating actions]
 
 PUNCHLINE:
-The final visual/comedic payoff.
+[final visual joke]
 
 RUNTIME:
-Estimated seconds.
+[20–60 seconds]
 
-🎬 ACTION SEQUENCE
+🎬 ACTION BEATS
 
-1.
-2.
-3.
-4.
-5.
-6.
+1. [what we see]
+2. [what we see]
+3. [what we see]
+4. [what we see]
+5. [what we see]
 
-Each action should describe WHAT WE SEE and WHAT THE
-CHARACTER DOES.
+Do not write anything outside this format.
 
-Do not write paragraphs of story.
-
-RESEARCH:
+VERIFIED RESEARCH:
 {research}
 """
     )
 
+    # =========================================================
+    # 3. PRODUCTION AGENT
+    # =========================================================
+
     production = groq(
         f"""
-You are the PRODUCTION DIRECTOR for a reusable
-Blender 5.2 Grease Pencil football-cartoon system.
+You are the PRODUCTION DIRECTOR for a Blender 5.2
+Grease Pencil football-cartoon system.
 
-Convert the comedy concept into an animation blueprint.
+Convert the comedy concept into a SHORT animation blueprint.
 
-DO NOT rewrite the joke.
-DO NOT add a new story.
-DO NOT add unnecessary characters.
+DO NOT rewrite the concept.
 
-Your job is to tell the animator exactly what needs to be built
-and animated.
+DO NOT add another joke.
 
-OUTPUT:
+DO NOT add another story.
 
-🎬 PRODUCTION BLUEPRINT
+DO NOT invent football facts.
+
+Keep it practical for Blender.
+
+Use reusable assets whenever possible.
+
+RETURN EXACTLY:
+
+🎬 PRODUCTION
 
 RUNTIME:
+[seconds]
 
 CHARACTERS:
-List characters required.
-
-REUSABLE ASSETS:
-Characters, actions, expressions, props and environments
-that can come from the existing library.
-
-NEW ASSETS:
-Only things that must be created specifically for this video.
+[list]
 
 ENVIRONMENT:
+[one short line]
 
-PROPS:
+REUSABLE ASSETS:
+[list]
 
-🎥 SHOT LIST
+NEW ASSETS:
+[list only if necessary]
 
-For every shot:
+🎥 SHOTS
 
-SHOT:
+SHOT 01
 TIME:
 CAMERA:
-CHARACTER:
 ACTION:
 EXPRESSION:
-PROP:
-DIALOGUE/SFX:
-PURPOSE:
+AUDIO/SFX:
 
-Use these camera presets when useful:
+SHOT 02
+TIME:
+CAMERA:
+ACTION:
+EXPRESSION:
+AUDIO/SFX:
 
-CAM_WIDE
-CAM_MED
-CAM_CLOSE
-CAM_TIGHT
-CAM_TWO_SHOT
-CAM_TRACK
-CAM_PUSH
-CAM_REACTION
+SHOT 03
+TIME:
+CAMERA:
+ACTION:
+EXPRESSION:
+AUDIO/SFX:
 
-🎭 ANIMATION REQUIREMENTS
+SHOT 04
+TIME:
+CAMERA:
+ACTION:
+EXPRESSION:
+AUDIO/SFX:
 
-List the exact actions needed.
+SHOT 05
+TIME:
+CAMERA:
+ACTION:
+EXPRESSION:
+AUDIO/SFX:
 
-😀 EXPRESSIONS
+🎭 ANIMATION NEEDED:
+[list exact actions]
 
-List the expressions needed.
+😀 EXPRESSIONS:
+[list]
 
-🔊 AUDIO
+⚠️ NOTES:
+[only important Blender notes]
 
-List dialogue/SFX/music cues only.
-
-⚠️ PRODUCTION NOTES
-
-Mention anything difficult, reusable or important for Blender.
-
-Keep the answer practical.
-This is a production blueprint, NOT a story.
+Keep this concise.
 
 COMEDY CONCEPT:
-
 {creative}
+
+VERIFIED RESEARCH:
+{research}
 """
     )
+
+    # =========================================================
+    # 4. FINAL TELEGRAM OUTPUT
+    # =========================================================
 
     return f"""
 ⚽ FOOTBALL CARTOON PRODUCTION BRIEF
@@ -219,7 +316,7 @@ COMEDY CONCEPT:
 {creative}
 
 ━━━━━━━━━━━━━━━━━━
-🔵 PRODUCTION BLUEPRINT
+🔵 PRODUCTION
 ━━━━━━━━━━━━━━━━━━
 
 {production}
