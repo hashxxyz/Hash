@@ -1,35 +1,32 @@
 import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+import requests
 from pipeline import run_pipeline
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+def send_telegram_message(chat_id, text):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": text[:4000]}, timeout=30).raise_for_status()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "⚽ Football AI Orchestrator\n\n"
-        "Use /newvideo <football event or idea> to start a project."
-    )
-
-async def newvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    idea = " ".join(context.args).strip()
-    if not idea:
-        await update.message.reply_text("Use: /newvideo <event or idea>")
-        return
-    await update.message.reply_text("🤖 Agents are working...")
+def handler(request):
     try:
-        result = run_pipeline(idea)
-        await update.message.reply_text(result[:4000])
+        if request.method != "POST":
+            return {"statusCode": 200, "body": "Football AI Orchestrator is running."}
+        update = request.get_json() if hasattr(request, "get_json") else request.json
+        message = update.get("message", {})
+        chat_id = message.get("chat", {}).get("id")
+        text = message.get("text", "").strip()
+        if not chat_id:
+            return {"statusCode": 200, "body": "ok"}
+        if text.startswith("/start"):
+            reply = "⚽ Football AI Orchestrator\n\nUse /newvideo <football event or idea> to start."
+        elif text.startswith("/newvideo"):
+            idea = text[len("/newvideo"):].strip()
+            reply = "Use: /newvideo <event or idea>" if not idea else run_pipeline(idea)
+        else:
+            reply = "Use /newvideo <football event or idea>"
+        send_telegram_message(chat_id, reply)
+        return {"statusCode": 200, "body": "ok"}
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Pipeline error: {e}")
-
-def main():
-    if not TOKEN:
-        raise RuntimeError("Missing TELEGRAM_BOT_TOKEN")
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("newvideo", newvideo))
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+        return {"statusCode": 500, "body": str(e)}
