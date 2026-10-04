@@ -18,7 +18,6 @@ Existing:
 - API_FOOTBALL_KEY
 
 Add:
-- API_BASKETBALL_KEY
 
 API-Sports provides a free plan with 100 requests/day for each API. The bot intentionally limits per-run calls.
 

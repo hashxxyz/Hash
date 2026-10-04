@@ -8,9 +8,9 @@ LAGOS_TZ = ZoneInfo("Africa/Lagos")
 
 
 def api_request(endpoint, params=None):
-    key = os.environ.get("API_BASKETBALL_KEY")
+    key = os.environ.get("API_FOOTBALL_KEY")
     if not key:
-        raise RuntimeError("API_BASKETBALL_KEY is not configured.")
+        raise RuntimeError("API_FOOTBALL_KEY is not configured.")
     r = requests.get(f"{BASE_URL}/{endpoint}", headers={"x-apisports-key": key, "Accept": "application/json"}, params=params or {}, timeout=30)
     r.raise_for_status()
     data = r.json()
