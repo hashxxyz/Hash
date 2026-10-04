@@ -8,19 +8,13 @@ class handler(BaseHTTPRequestHandler):
 
     def send_telegram(self, chat_id, text):
         token = os.environ["TELEGRAM_BOT_TOKEN"]
-
-        # Telegram message limit is about 4096 characters.
-        # Keep a safety margin and split long AI responses.
         max_length = 3900
 
         parts = []
-
         while len(text) > max_length:
             split_at = text.rfind("\n", 0, max_length)
-
             if split_at == -1:
                 split_at = text.rfind(" ", 0, max_length)
-
             if split_at == -1:
                 split_at = max_length
 
@@ -33,201 +27,112 @@ class handler(BaseHTTPRequestHandler):
         total = len(parts)
 
         for i, part in enumerate(parts, 1):
-
             if total > 1:
                 part = f"📄 Part {i}/{total}\n\n{part}"
 
             response = requests.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": part
-                },
-                timeout=30
+                json={"chat_id": chat_id, "text": part},
+                timeout=30,
             )
-
             response.raise_for_status()
 
     def do_GET(self):
-
         self.send_response(200)
-        self.send_header(
-            "Content-Type",
-            "text/plain"
-        )
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
-
-        self.wfile.write(
-            b"Football AI Orchestrator is LIVE"
-        )
+        self.wfile.write(b"AI Football Betting Guru is LIVE")
 
     def do_POST(self):
-
         try:
-
-            length = int(
-                self.headers.get(
-                    "Content-Length",
-                    0
-                )
-            )
-
+            length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
+            update = json.loads(body.decode("utf-8"))
 
-            update = json.loads(
-                body.decode("utf-8")
-            )
-
-            message = update.get(
-                "message",
-                {}
-            )
-
-            chat_id = message.get(
-                "chat",
-                {}
-            ).get("id")
-
-            text = message.get(
-                "text",
-                ""
-            ).strip()
+            message = update.get("message", {})
+            chat_id = (message.get("chat") or {}).get("id")
+            text = (message.get("text") or "").strip()
 
             if not chat_id:
-
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"ok")
                 return
 
-            # START
-            if text.startswith("/start"):
+            command = text.split()[0].split("@")[0].lower() if text else ""
 
-                reply = (
-                    "⚽ Football AI Orchestrator\n\n"
-                    "🔥 Bot connected successfully!\n\n"
-                    "Pipeline:\n"
-                    "Research → Comedy → Production\n\n"
-                    "Use:\n"
-                    "/newvideo <football situation>"
+            if command == "/start":
+                self.send_telegram(
+                    chat_id,
+                    "⚽ AI FOOTBALL BETTING GURU\n\n"
+                    "I automatically scan today's football data and "
+                    "produce probability-based betting analysis.\n\n"
+                    "Commands:\n"
+                    "/tips — strongest overall picks\n"
+                    "/safe — conservative picks\n"
+                    "/goals — goals markets\n"
+                    "/btts — BTTS picks\n"
+                    "/acca — up to 3 strongest legs\n"
+                    "/help — command list\n\n"
+                    "⚠️ No bet is guaranteed."
                 )
+
+            elif command in {"/tips", "/safe", "/goals", "/btts", "/acca"}:
+                mode = command[1:]
 
                 self.send_telegram(
                     chat_id,
-                    reply
+                    "🧠 Scanning today's football...\n\n"
+                    "Fixtures → predictions → verified odds → AI analysis"
                 )
 
-            # NEW VIDEO
-            elif text.startswith("/newvideo"):
-
-                idea = text[
-                    len("/newvideo"):
-                ].strip()
-
-                if not idea:
-
+                try:
+                    from pipeline import run_pipeline
+                    result = run_pipeline(mode=mode)
+                    self.send_telegram(chat_id, result)
+                except Exception as e:
                     self.send_telegram(
                         chat_id,
-                        "Use:\n\n"
-                        "/newvideo <football situation>"
+                        "❌ ANALYSIS ERROR\n\n"
+                        + str(e)
                     )
 
-                else:
-
-                    # Tell the user the job has started.
-                    self.send_telegram(
-                        chat_id,
-                        "🧠 Working on it...\n\n"
-                        "Football research → "
-                        "Comedy concept → "
-                        "Production blueprint"
-                    )
-
-                    try:
-
-                        # Import only when needed.
-                        # This keeps /start working even if
-                        # an AI provider has a problem.
-                        from pipeline import run_pipeline
-
-                        result = run_pipeline(
-                            idea
-                        )
-
-                        self.send_telegram(
-                            chat_id,
-                            result
-                        )
-
-                    except Exception as e:
-
-                        error_message = (
-                            "❌ PIPELINE ERROR\n\n"
-                            + str(e)
-                        )
-
-                        self.send_telegram(
-                            chat_id,
-                            error_message
-                        )
-
-            # HELP
-            elif text.startswith("/help"):
-
-                reply = (
-                    "⚽ Football AI Orchestrator\n\n"
-                    "Commands:\n\n"
-                    "/start\n"
-                    "Check the bot connection.\n\n"
-                    "/newvideo <football situation>\n"
-                    "Run the full AI production pipeline.\n\n"
-                    "/help\n"
-                    "Show this help."
-                )
-
+            elif command == "/help":
                 self.send_telegram(
                     chat_id,
-                    reply
+                    "⚽ AI FOOTBALL BETTING GURU\n\n"
+                    "/tips — best overall opportunities\n"
+                    "/safe — lower-risk opportunities\n"
+                    "/goals — goals markets only\n"
+                    "/btts — BTTS only\n"
+                    "/acca — maximum 3-leg accumulator\n\n"
+                    "The bot finds today's fixtures automatically. "
+                    "You do not need to send match names.\n\n"
+                    "⚠️ Probability-based analysis, not guaranteed results."
                 )
 
-            # UNKNOWN COMMAND
             else:
-
                 self.send_telegram(
                     chat_id,
-                    "Use:\n\n"
-                    "/start\n"
-                    "/newvideo <football situation>\n"
+                    "Use /tips to scan today's football automatically.\n\n"
+                    "Other commands:\n"
+                    "/safe\n"
+                    "/goals\n"
+                    "/btts\n"
+                    "/acca\n"
                     "/help"
                 )
 
             self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "text/plain"
-            )
+            self.send_header("Content-Type", "text/plain")
             self.end_headers()
-
-            self.wfile.write(
-                b"ok"
-            )
+            self.wfile.write(b"ok")
 
         except Exception as e:
+            print("ERROR:", str(e))
 
-            print(
-                "ERROR:",
-                str(e)
-            )
-
-            # Always acknowledge Telegram so it
-            # doesn't repeatedly resend the update.
+            # Always acknowledge Telegram.
             self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "text/plain"
-            )
+            self.send_header("Content-Type", "text/plain")
             self.end_headers()
-
-            self.wfile.write(
-                b"ok"
-            )
+            self.wfile.write(b"ok")
