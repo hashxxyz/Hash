@@ -1,323 +1,164 @@
 from agents import gemini, openrouter, groq
 
 
-def run_pipeline(idea):
-
-    # =========================================================
-    # 1. RESEARCH AGENT
-    # =========================================================
+def run_pipeline():
 
     research = gemini(
-        f"""
-You are the FOOTBALL FACT-CHECKING AGENT.
+        """
+You are the FOOTBALL BETTING RESEARCH AGENT.
 
-USER REQUEST:
-{idea}
+Identify today's football matches and determine which are worth deeper betting analysis.
 
-Your ONLY job is to identify the EXACT football event the user is referring to
-and provide verified facts about that event.
+Rules:
+- Focus on matches being played today.
+- Do not invent fixtures, odds, injuries, lineups or statistics.
+- Do not give betting tips yet.
+- Do not write stories.
 
-IMPORTANT DATE / EVENT RULES:
+For each potentially interesting match collect:
+MATCH
+DATE
+COMPETITION
+RECENT FORM
+HOME/AWAY FORM
+GOALS
+BTTS
+OVER/UNDER TRENDS
+H2H
+INJURIES
+SUSPENSIONS
+EXPECTED LINEUPS
+IMPORTANT NEWS
+AVAILABLE ODDS IF VERIFIED
 
-1. If the user says "recent", "recently", "today", "yesterday",
-   "two days ago", "latest", "last match", etc., find the most recent
-   relevant football event.
+Also identify matches that should be avoided.
 
-2. If the user names two teams, such as "France vs Italy",
-   identify the most recent match between those teams unless the user
-   explicitly gives another date or competition.
-
-3. NEVER substitute an older famous match just because it has more
-   information available.
-
-4. The date of the event MUST be included.
-
-5. Verify the score, goals, scorers, cards and other important events
-   before using them.
-
-6. If you cannot confidently identify the exact event, say:
-   "EVENT UNCERTAIN"
-   and explain what information is missing.
-
-7. NEVER invent facts.
-
-8. Do NOT write a story.
-9. Do NOT create comedy.
-10. Do NOT suggest cartoon scenes.
-
-RETURN ONLY THIS:
-
-EVENT:
-[exact match/event]
-
-DATE:
-[date]
-
-COMPETITION:
-[competition]
-
-FINAL SCORE:
-[score]
-
-KEY FACTS:
-- [fact]
-- [fact]
-- [fact]
-- [fact]
-- [fact]
-
-IMPORTANT PLAYERS:
-- [player]
-- [player]
-
-POTENTIAL COMEDY HOOKS:
-- [short visual opportunity]
-- [short visual opportunity]
-- [short visual opportunity]
-
-FACT CONFIDENCE:
-[HIGH / MEDIUM / LOW]
-
-FACTS MUST BE ACCURATE.
+Return concise research data only.
 """
-
-
     )
 
-    # =========================================================
-    # 2. COMEDY AGENT
-    # =========================================================
-
-    creative = openrouter(
+    analysis = openrouter(
         f"""
-You are the COMEDY DIRECTOR for an original football cartoon channel.
+You are an expert football betting analyst.
 
-Create ONE short football-cartoon concept from the VERIFIED RESEARCH below.
+Analyze the football research below and identify the strongest
+betting opportunities.
 
-This is NOT a story-writing task.
+Consider:
+- Recent form
+- Home/away performance
+- Goals
+- BTTS
+- Over/under trends
+- xG when available
+- Injuries
+- Suspensions
+- Expected lineups
+- H2H
+- Match importance
+- Fixture congestion
+- Statistical consistency
+- Prediction-source agreement
+- Available odds when verified
 
-The format is:
+Possible markets:
+1X2
+Double Chance
+Draw No Bet
+Over/Under Goals
+BTTS
+Team Goals
+Corners
+Cards
 
-REAL FOOTBALL EVENT
-→ FUNNY ANGLE
-→ VISUAL GAG
-→ ESCALATION
-→ PUNCHLINE
+Do not invent missing information.
+If evidence is weak, reject the match.
+Give probability estimates, not guarantees.
 
-STYLE:
+Return ONLY:
 
-- Fast
-- Visual
-- Physical comedy
-- Easy to understand
-- Exaggerated cartoon reactions
-- Minimal dialogue
-- One main joke
-- 20–60 seconds
-- Simple football environments
-- Reusable characters and assets
-- Current/recent football situation when provided
+BEST BETTING OPPORTUNITIES
 
-IMPORTANT FACT RULE:
+1.
+MATCH:
+MARKET:
+ESTIMATED PROBABILITY:
+CONFIDENCE:
+RISK:
+REASON:
 
-The RESEARCH section is the FACT LOCK.
+2.
+MATCH:
+MARKET:
+ESTIMATED PROBABILITY:
+CONFIDENCE:
+RISK:
+REASON:
 
-You MUST NOT change:
+3.
+MATCH:
+MARKET:
+ESTIMATED PROBABILITY:
+CONFIDENCE:
+RISK:
+REASON:
 
-- match
-- date
-- competition
-- score
-- scorer
-- player
-- goal
-- card
-- result
-- real match event
+MATCHES TO AVOID
+- match + reason
 
-You MAY exaggerate the VERIFIED EVENT for cartoon comedy.
-
-Example:
-
-FACT:
-A player scored.
-
-ALLOWED:
-The cartoon player celebrates ridiculously.
-
-NOT ALLOWED:
-Claiming another player scored when they did not.
-
-Do not invent a different match.
-
-Do not use historical information unless it is directly relevant
-to the researched event.
-
-Do not write narration.
-
-Do not write a long explanation.
-
-Do not create a multi-act story.
-
-Do not introduce unnecessary characters.
-
-RETURN EXACTLY:
-
-🎯 COMEDY CONCEPT
-
-TITLE:
-[short title]
-
-REAL EVENT:
-[one sentence]
-
-COMEDY PREMISE:
-[one sentence]
-
-CHARACTERS:
-[only necessary characters]
-
-VISUAL GAG:
-[what we see]
-
-ESCALATION:
-[2–3 short escalating actions]
-
-PUNCHLINE:
-[final visual joke]
-
-RUNTIME:
-[20–60 seconds]
-
-🎬 ACTION BEATS
-
-1. [what we see]
-2. [what we see]
-3. [what we see]
-4. [what we see]
-5. [what we see]
-
-Do not write anything outside this format.
-
-VERIFIED RESEARCH:
+RESEARCH:
 {research}
 """
     )
 
-    # =========================================================
-    # 3. PRODUCTION AGENT
-    # =========================================================
-
-    production = groq(
+    final = groq(
         f"""
-You are the PRODUCTION DIRECTOR for a Blender 5.2
-Grease Pencil football-cartoon system.
+You are the FINAL BETTING REPORT AGENT.
 
-Convert the comedy concept into a SHORT animation blueprint.
+Turn the analysis into a concise Telegram betting report.
 
-DO NOT rewrite the concept.
+Do NOT add new bets.
+Do NOT invent statistics or odds.
+Do NOT claim any bet is guaranteed.
+Use probability and risk clearly.
 
-DO NOT add another joke.
+Return exactly:
 
-DO NOT add another story.
+AI BETTING GURU
+TODAY
 
-DO NOT invent football facts.
+BEST PICKS
 
-Keep it practical for Blender.
+1. MATCH
+Market:
+Probability:
+Confidence:
+Risk:
+Why:
 
-Use reusable assets whenever possible.
+2. MATCH
+Market:
+Probability:
+Confidence:
+Risk:
+Why:
 
-RETURN EXACTLY:
+3. MATCH
+Market:
+Probability:
+Confidence:
+Risk:
+Why:
 
-🎬 PRODUCTION
+AVOID
+[list rejected matches and short reasons]
 
-RUNTIME:
-[seconds]
+NOTE:
+These are probability-based analyses, not guaranteed results.
 
-CHARACTERS:
-[list]
-
-ENVIRONMENT:
-[one short line]
-
-REUSABLE ASSETS:
-[list]
-
-NEW ASSETS:
-[list only if necessary]
-
-🎥 SHOTS
-
-SHOT 01
-TIME:
-CAMERA:
-ACTION:
-EXPRESSION:
-AUDIO/SFX:
-
-SHOT 02
-TIME:
-CAMERA:
-ACTION:
-EXPRESSION:
-AUDIO/SFX:
-
-SHOT 03
-TIME:
-CAMERA:
-ACTION:
-EXPRESSION:
-AUDIO/SFX:
-
-SHOT 04
-TIME:
-CAMERA:
-ACTION:
-EXPRESSION:
-AUDIO/SFX:
-
-SHOT 05
-TIME:
-CAMERA:
-ACTION:
-EXPRESSION:
-AUDIO/SFX:
-
-🎭 ANIMATION NEEDED:
-[list exact actions]
-
-😀 EXPRESSIONS:
-[list]
-
-⚠️ NOTES:
-[only important Blender notes]
-
-Keep this concise.
-
-COMEDY CONCEPT:
-{creative}
-
-VERIFIED RESEARCH:
-{research}
+ANALYSIS:
+{analysis}
 """
     )
 
-    # =========================================================
-    # 4. FINAL TELEGRAM OUTPUT
-    # =========================================================
-
-    return f"""
-⚽ FOOTBALL CARTOON PRODUCTION BRIEF
-
-━━━━━━━━━━━━━━━━━━
-🟠 COMEDY CONCEPT
-━━━━━━━━━━━━━━━━━━
-
-{creative}
-
-━━━━━━━━━━━━━━━━━━
-🔵 PRODUCTION
-━━━━━━━━━━━━━━━━━━
-
-{production}
-"""
+    return final
