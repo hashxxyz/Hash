@@ -1,33 +1,35 @@
-# AI Football Betting Guru
+# AI Football + Basketball Betting Guru
 
-## Environment variables
+## Replace/add in the existing Hash repo
+- pipeline.py
+- football_data.py
+- basketball_data.py (NEW)
+- api/index.py
+- requirements.txt
 
-Required in Vercel:
+Keep agents.py and the existing Vercel setup.
 
+## Vercel environment variables
+Existing:
 - TELEGRAM_BOT_TOKEN
 - GEMINI_API_KEY
 - OPENROUTER_API_KEY
 - GROQ_API_KEY
 - API_FOOTBALL_KEY
 
+Add:
+- API_BASKETBALL_KEY
+
+API-Sports provides a free plan with 100 requests/day for each API. The bot intentionally limits per-run calls.
+
 ## Commands
+/tips — football + basketball
+/football — football only
+/basketball — basketball only
+/safe — conservative picks
+/goals — football goals
+/btts — football BTTS
+/acca — strongest combined selections (max 3)
+/help
 
-- /tips
-- /safe
-- /goals
-- /btts
-- /acca
-- /help
-
-The bot automatically retrieves today's fixtures from API-Football,
-uses available pre-match prediction/odds data, and sends the strongest
-probability-based opportunities.
-
-## Important
-
-The first version intentionally does not pretend to scrape Forebet,
-FreeSuperTips, Sofascore, FotMob, Flashscore, FBref, Understat or
-FootyStats when no reliable API/feed has been connected. Those sources
-can be added as secondary evidence later.
-
-The bot must never present a bet as guaranteed.
+No guaranteed-win language. Missing data lowers confidence rather than being invented.

@@ -1,295 +1,156 @@
 import json
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 from agents import gemini, openrouter, groq
-from football_data import (
-    get_today_fixtures,
-    get_predictions,
-    get_odds,
-    get_lagos_date,
-)
+from football_data import get_today_fixtures, get_predictions, get_odds as football_odds, get_lagos_date
+from basketball_data import get_today_games, get_odds as basketball_odds
 
-MAX_CANDIDATES = 12
-PREDICTION_CALLS = 12
-ODDS_CALLS = 8
-
-# Keep the first version focused on competitions that normally have
-# enough data and liquidity. The AI still sees the competition name.
-PRIORITY_LEAGUES = {
-    "Premier League",
-    "La Liga",
-    "Serie A",
-    "Bundesliga",
-    "Ligue 1",
-    "UEFA Champions League",
-    "UEFA Europa League",
-    "UEFA Europa Conference League",
-    "Eredivisie",
-    "Primeira Liga",
-    "Süper Lig",
-}
+MAX_FOOTBALL = 10
+MAX_BASKETBALL = 10
+FOOTBALL_ODDS_CALLS = 6
+BASKETBALL_ODDS_CALLS = 6
+PRIORITY_LEAGUES = {"Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1", "UEFA Champions League", "UEFA Europa League", "UEFA Europa Conference League", "Eredivisie", "Primeira Liga", "Süper Lig"}
 
 
-def _fixture_summary(f):
-    fixture = f.get("fixture", {})
-    league = f.get("league", {})
-    teams = f.get("teams", {})
-
-    return {
-        "fixture_id": fixture.get("id"),
-        "date": fixture.get("date"),
-        "status": (fixture.get("status") or {}).get("short"),
-        "venue": (fixture.get("venue") or {}).get("name"),
-        "competition": league.get("name"),
-        "country": league.get("country"),
-        "home": (teams.get("home") or {}).get("name"),
-        "away": (teams.get("away") or {}).get("name"),
-    }
+def football_summary(f):
+    x, l, t = f.get("fixture", {}), f.get("league", {}), f.get("teams", {})
+    return {"id": x.get("id"), "date": x.get("date"), "status": (x.get("status") or {}).get("short"), "competition": l.get("name"), "country": l.get("country"), "home": (t.get("home") or {}).get("name"), "away": (t.get("away") or {}).get("name")}
 
 
-def _extract_prediction(raw):
-    if not raw:
-        return {}
-
-    item = raw[0] if isinstance(raw, list) else raw
-    prediction = item.get("predictions", item)
-
-    return {
-        "winner": prediction.get("winner"),
-        "win_or_draw": prediction.get("win_or_draw"),
-        "under_over": prediction.get("under_over"),
-        "advice": prediction.get("advice"),
-        "percent": prediction.get("percent"),
-        "goals": prediction.get("goals"),
-        "comparison": prediction.get("comparison"),
-        "h2h": prediction.get("h2h"),
-        "teams": prediction.get("teams"),
-    }
+def basketball_summary(g):
+    teams = g.get("teams", {})
+    league = g.get("league", {})
+    status = g.get("status", {})
+    return {"id": g.get("id"), "date": g.get("date"), "status": status.get("short") or status.get("long"), "competition": league.get("name"), "country": league.get("country"), "home": (teams.get("home") or {}).get("name"), "away": (teams.get("away") or {}).get("name")}
 
 
-def _extract_odds(raw):
-    # Preserve only compact, verified bookmaker-market data.
-    if not raw:
-        return []
-
-    output = []
-
-    for item in raw[:3]:
-        bookmaker = item.get("bookmaker", {})
-        bookmaker_name = bookmaker.get("name")
-
-        for bet in bookmaker.get("bets", [])[:12]:
-            values = []
-            for value in bet.get("values", [])[:20]:
-                values.append({
-                    "value": value.get("value"),
-                    "odd": value.get("odd"),
-                })
-
-            output.append({
-                "bookmaker": bookmaker_name,
-                "market": bet.get("name"),
-                "values": values,
-            })
-
-    return output
+def parse_odds(raw, sport):
+    out = []
+    for item in (raw or [])[:3]:
+        bookmaker = item.get("bookmaker") or {}
+        for bet in (bookmaker.get("bets") or [])[:15]:
+            vals = []
+            for v in (bet.get("values") or [])[:20]:
+                vals.append({"value": v.get("value"), "odd": v.get("odd"), "handicap": v.get("handicap")})
+            out.append({"sport": sport, "bookmaker": bookmaker.get("name"), "market": bet.get("name"), "values": vals})
+    return out
 
 
-def collect_data():
+def collect_football():
     fixtures = get_today_fixtures()
-
-    # Only future/not-started fixtures.
     usable = []
     for f in fixtures:
-        summary = _fixture_summary(f)
-        status = summary.get("status")
-        if status in {"NS", "TBD", "PST"}:
-            usable.append((f, summary))
-
-    # Prefer major competitions, then fill remaining slots with other
-    # fixtures so the bot is not completely blind on quieter days.
-    usable.sort(
-        key=lambda x: (
-            x[1].get("competition") not in PRIORITY_LEAGUES,
-            x[1].get("date") or "",
-        )
-    )
-    usable = usable[:MAX_CANDIDATES]
-
+        s = football_summary(f)
+        if s["status"] in {"NS", "TBD", "PST"} and s["home"] and s["away"]:
+            usable.append(s)
+    usable.sort(key=lambda s: (s["competition"] not in PRIORITY_LEAGUES, s["date"] or ""))
+    usable = usable[:MAX_FOOTBALL]
     research = []
-
-    for index, (fixture, summary) in enumerate(usable):
-        record = {"fixture": summary}
-
-        # Predictions are the most useful API-Football pre-match signal.
-        if index < PREDICTION_CALLS:
-            try:
-                record["prediction"] = _extract_prediction(
-                    get_predictions(summary["fixture_id"])
-                )
-            except Exception as e:
-                record["prediction_error"] = str(e)
-
-        # Odds are expensive in quota terms, so only request them for
-        # the first few candidate fixtures.
-        if index < ODDS_CALLS:
-            try:
-                record["odds"] = _extract_odds(
-                    get_odds(summary["fixture_id"])
-                )
-            except Exception as e:
-                record["odds_error"] = str(e)
-
-        research.append(record)
-
+    for i, s in enumerate(usable):
+        r = {"fixture": s, "sport": "football"}
+        try:
+            r["prediction"] = (get_predictions(s["id"]) or [{}])[0].get("predictions", {})
+        except Exception as e:
+            r["prediction_error"] = str(e)
+        if i < FOOTBALL_ODDS_CALLS:
+            try: r["odds"] = parse_odds(football_odds(s["id"]), "football")
+            except Exception as e: r["odds_error"] = str(e)
+        research.append(r)
     return research
 
 
-def _mode_instruction(mode):
-    modes = {
-        "tips": "Find the strongest overall betting opportunities across sensible markets.",
-        "safe": "Prioritize conservative markets such as double chance, draw-no-bet, team over 0.5, and over 1.5 goals. Reject volatile picks.",
-        "goals": "Focus only on goals markets: Over/Under and team-goal markets. Prefer strong statistical evidence.",
-        "btts": "Focus only on Both Teams To Score markets. Reject matches without sufficient evidence.",
-        "acca": "Build a maximum 3-leg accumulator from the strongest low-to-medium risk selections. Do not force a leg if evidence is weak.",
-    }
-    return modes.get(mode, modes["tips"])
+def collect_basketball():
+    games = get_today_games()
+    usable = []
+    for g in games:
+        s = basketball_summary(g)
+        if s["home"] and s["away"] and s["id"]:
+            status = str(s["status"] or "").lower()
+            if "cancel" not in status and "finish" not in status and "final" not in status:
+                usable.append(s)
+    usable.sort(key=lambda s: s["date"] or "")
+    usable = usable[:MAX_BASKETBALL]
+    research = []
+    for i, s in enumerate(usable):
+        r = {"fixture": s, "sport": "basketball"}
+        if i < BASKETBALL_ODDS_CALLS:
+            try: r["odds"] = parse_odds(basketball_odds(s["id"]), "basketball")
+            except Exception as e: r["odds_error"] = str(e)
+        research.append(r)
+    return research
+
+
+def mode_instruction(mode):
+    return {
+        "tips": "Find the strongest overall opportunities across football and basketball.",
+        "football": "Analyze football only and find the strongest opportunities.",
+        "basketball": "Analyze basketball only and find the strongest opportunities.",
+        "safe": "Prioritize conservative markets and reject volatile selections.",
+        "goals": "Football goals markets only; reject weak evidence.",
+        "btts": "Football BTTS only; reject weak evidence.",
+        "acca": "Build a maximum 3-leg accumulator from the strongest selections across both sports. Do not force a leg.",
+    }.get(mode, "Find the strongest overall opportunities across football and basketball.")
 
 
 def run_pipeline(mode="tips"):
     date = get_lagos_date()
-    data = collect_data()
-
+    data = []
+    errors = []
+    if mode in {"tips", "football", "safe", "goals", "btts", "acca"}:
+        try: data.extend(collect_football())
+        except Exception as e: errors.append(f"Football data error: {e}")
+    if mode in {"tips", "basketball", "acca"}:
+        try: data.extend(collect_basketball())
+        except Exception as e: errors.append(f"Basketball data error: {e}")
     if not data:
-        return (
-            "⚠️ AI BETTING GURU\n\n"
-            f"No suitable upcoming football fixtures were returned by "
-            f"the football data provider for {date}.\n\n"
-            "Try again later."
-        )
+        return "⚠️ AI BETTING GURU\n\nNo usable fixtures were returned today.\n\n" + ("\n".join(errors) if errors else "Try again later.")
 
-    research_json = json.dumps(data, ensure_ascii=False, indent=2)
+    research = gemini(f"""
+You are the VERIFIED SPORTS DATA RESEARCH AGENT.
+Date in Africa/Lagos: {date}
+Requested mode: {mode}
+TASK: {mode_instruction(mode)}
 
-    research = gemini(
-        f"""
-You are the VERIFIED FOOTBALL DATA RESEARCH AGENT.
-
-Today's date in Africa/Lagos is {date}.
-
-The data below comes from API-Football. Treat it as the source of truth
-for fixtures, prediction fields and any odds actually present.
-
-TASK:
-{_mode_instruction(mode)}
-
-Rules:
-- Analyze ONLY fixtures present in the supplied data.
-- Never invent fixtures, odds, injuries, lineups, statistics, xG or form.
-- If a required fact is missing, say it is missing and lower confidence.
-- Do not call anything guaranteed or 100% certain.
-- Prefer markets that can be supported by the supplied evidence.
-- Reject matches where evidence is weak or contradictory.
-- Do not force a number of picks.
-
-Return structured research for the strongest candidates and a separate
-avoid list.
+Use ONLY the supplied API data. Never invent odds, injuries, form, xG, lineups, player news, statistics or fixtures. Missing data must reduce confidence. Do not call any bet guaranteed or 100% certain. For basketball, do not invent spread/total evidence if odds are missing. Separate strong candidates from avoid candidates.
 
 DATA:
-{research_json}
-"""
-    )
+{json.dumps(data, ensure_ascii=False, indent=2)}
+""")
 
-    analysis = openrouter(
-        f"""
-You are a disciplined professional football betting analyst.
+    analysis = openrouter(f"""
+You are a disciplined professional football and basketball betting analyst.
+Date: {date}. Mode: {mode}. {mode_instruction(mode)}
 
-Date: {date}
-Requested mode: {mode}
+Evaluate only the verified research below. Evidence quality beats quantity. Agreement between signals increases confidence; missing or conflicting data lowers confidence. Never manufacture bookmaker odds or statistics. Probability is an estimate, not a guarantee.
 
-{_mode_instruction(mode)}
-
-Review the verified research below.
-
-Scoring principles:
-- Evidence quality matters more than flashy predictions.
-- Agreement between independent signals increases confidence.
-- Missing data decreases confidence.
-- Avoid highly volatile markets unless evidence is unusually strong.
-- Never manufacture bookmaker odds.
-- Probability is an estimate, not a guarantee.
-- A match should be rejected if the edge is unclear.
-
-For each accepted pick provide:
-MATCH
-MARKET
-ESTIMATED PROBABILITY
-CONFIDENCE /10
-RISK
-REASON
-
-For each rejected/avoided match provide:
-MATCH
-REASON
-
-Do not add facts that are not in the research.
+For each accepted pick give: SPORT, MATCH, MARKET, ESTIMATED PROBABILITY, CONFIDENCE /10, RISK, REASON.
+For rejected matches give MATCH and REASON.
+Do not force picks.
 
 RESEARCH:
 {research}
-"""
-    )
+""")
 
-    final = groq(
-        f"""
-You are the FINAL TELEGRAM FOOTBALL BETTING REPORT EDITOR.
-
-Create a clear, concise report for the user.
-
-DATE: {date}
-MODE: {mode}
-
-Use ONLY the picks contained in the analyst output.
-Do not add new bets, statistics, odds, injuries or claims.
-Do not say "sure win", "banker", "guaranteed", "100%" or similar.
-If there are fewer than 3 genuinely strong picks, show fewer.
-
-Format:
+    return groq(f"""
+You are the FINAL TELEGRAM AI BETTING GURU editor.
+Create a concise combined report. Use ONLY picks in the analyst output. Do not add facts, odds or bets. If fewer than 3 strong picks exist, show fewer.
 
 🔥 AI BETTING GURU
 📅 {date}
 
-🏆 BEST PICKS
+⚽ FOOTBALL
+...
 
-1️⃣ Match
-Market:
-Probability:
-Confidence:
-Risk:
-Why:
+🏀 BASKETBALL
+...
 
-2️⃣ Match
-Market:
-Probability:
-Confidence:
-Risk:
-Why:
-
-3️⃣ Match
-Market:
-Probability:
-Confidence:
-Risk:
-Why:
+🏆 BEST OVERALL PICKS
+...
 
 🚫 AVOID
-- Match — reason
+...
 
 ⚠️ NOTE
 Probability-based analysis, not guaranteed results. Bet responsibly.
 
 ANALYST OUTPUT:
 {analysis}
-"""
-    )
-
-    return final
+""")
