@@ -24,7 +24,7 @@ def get_lagos_date():
 
 
 def get_today_games():
-    return api_request("games", {"date": get_lagos_date()})
+    return api_request("games", {"date": get_lagos_date(), "timezone": "Africa/Lagos"})
 
 
 def get_odds(game_id):

@@ -24,11 +24,20 @@ def get_lagos_date():
 
 
 def get_today_fixtures():
-    return api_request("fixtures", {"date": get_lagos_date()})
+    return api_request("fixtures", {"date": get_lagos_date(), "timezone": "Africa/Lagos"})
 
 
 def get_predictions(fixture_id):
     return api_request("predictions", {"fixture": fixture_id})
+
+
+def get_odds_by_league(league_id, season):
+    """One call returns odds for every fixture of that league today (much cheaper than one call per match)."""
+    params = {"league": league_id, "season": season, "date": get_lagos_date(), "timezone": "Africa/Lagos"}
+    bookmaker = os.environ.get("ODDS_BOOKMAKER", "").strip()
+    if bookmaker:
+        params["bookmaker"] = bookmaker
+    return api_request("odds", params)
 
 
 def get_odds(fixture_id):
