@@ -18,7 +18,7 @@ MENU = ("/tips — everything (all sections)\n/totals — all over/under (footba
         "/over — football over goals\n/under — football under goals\n/goals — football over + under\n"
         "/bbover — basketball over\n/bbunder — basketball under\n"
         "/1x2 — match result\n/dc — double chance\n/btts — both teams to score\n"
-        "/safe — conservative picks\n/acca — best 3-leg accumulator")
+        "/safe — conservative picks\n/acca — best 3-leg accumulator\n/longshot — build a longshot slip from today's picks")
 START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
 HELP_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\n" + MENU + "\n\n⚠️ Probability-based analysis, not guaranteed results."
 FALLBACK_TEXT = "Use /tips to scan today's games.\n\n" + MENU
@@ -104,6 +104,13 @@ class handler(BaseHTTPRequestHandler):
             cmd = text.split()[0].split("@")[0].lower() if text else ""
             if cmd == "/start":
                 self.send_telegram(chat_id, START_TEXT)
+            elif cmd == "/longshot":
+                try:
+                    from pipeline import run_longshot
+                    self.send_telegram(chat_id, run_longshot(text.split()[1:]))
+                except Exception as e:
+                    print("LONGSHOT ERROR:", scrub(e))
+                    self.send_telegram(chat_id, "❌ Longshot failed this time. Please try again in a minute.")
             elif cmd in COMMANDS:
                 mode = cmd[1:]
                 label = "football" if mode in {"tips", "acca"} and not os.environ.get("ENABLE_BASKETBALL") else "football + basketball" if mode in {"tips", "acca"} else mode
