@@ -141,7 +141,8 @@ def _competition_results(code):
     if hit is None:
         hit = []
         for m in get_finished_matches(code):
-            ft = ((m.get("score") or {}).get("fullTime") or {})
+            sc = m.get("score") or {}
+            ft = sc.get("regularTime") or sc.get("fullTime") or {}  # 90 minutes, not extra time / penalties
             h, a = (m.get("homeTeam") or {}).get("id"), (m.get("awayTeam") or {}).get("id")
             if None not in (ft.get("home"), ft.get("away"), h, a):
                 hit.append({"h": h, "a": a, "hs": ft["home"], "as": ft["away"], "d": (m.get("utcDate") or "")[:10]})
