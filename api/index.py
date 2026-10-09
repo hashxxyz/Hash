@@ -19,7 +19,7 @@ MENU = ("/tips — everything (all sections)\n/totals — all over/under (footba
         "/bbover — basketball over\n/bbunder — basketball under\n"
         "/1x2 — match result\n/dc — double chance\n/btts — both teams to score\n"
         "/safe — conservative picks\n/acca — best 3-leg accumulator")
-START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and odds and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
+START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
 HELP_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\n" + MENU + "\n\n⚠️ Probability-based analysis, not guaranteed results."
 FALLBACK_TEXT = "Use /tips to scan today's games.\n\n" + MENU
 
@@ -106,7 +106,7 @@ class handler(BaseHTTPRequestHandler):
                 self.send_telegram(chat_id, START_TEXT)
             elif cmd in COMMANDS:
                 mode = cmd[1:]
-                label = "football + basketball" if mode in {"tips", "acca"} else mode
+                label = "football" if mode in {"tips", "acca"} and not os.environ.get("ENABLE_BASKETBALL") else "football + basketball" if mode in {"tips", "acca"} else mode
                 self.send_telegram(chat_id, f"🧠 Scanning today's {label}...\n\nData → research → AI analysis → final picks")
                 try:
                     from pipeline import run_pipeline
