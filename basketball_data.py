@@ -29,3 +29,7 @@ def get_today_games():
 
 def get_odds(game_id):
     return api_request("odds", {"game": game_id})
+
+
+def get_team_statistics(league_id, season, team_id):
+    return api_request("statistics", {"league": league_id, "season": season, "team": team_id})

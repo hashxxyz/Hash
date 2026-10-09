@@ -6,10 +6,10 @@ import requests
 
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "40"))
 
+# Names confirmed in Google's Gemini API docs. Override with the GEMINI_MODELS env var.
 DEFAULT_GEMINI_MODELS = [
-    "gemini-3.8-flash",
     "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
 ]
 
 SECRET_ENV_NAMES = [

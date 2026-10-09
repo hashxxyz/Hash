@@ -7,30 +7,32 @@ LINE = "━━━━━━━━━━━━━━"
 
 SECTIONS = [
     ("OVER", "📈 OVER GOALS"),
-    ("CORNERS", "🚩 CORNERS"),
+    ("UNDER", "📉 UNDER GOALS"),
+    ("BB_OVER", "🏀 BASKETBALL OVER"),
+    ("BB_UNDER", "🏀 BASKETBALL UNDER"),
     ("1X2", "🏁 1X2 · MATCH RESULT"),
     ("DOUBLE_CHANCE", "🛡 DOUBLE CHANCE"),
-    ("UNDER", "📉 UNDER GOALS"),
-    ("FIRST_HALF", "⏱ 1ST HALF"),
     ("BTTS", "⚽ BOTH TEAMS TO SCORE"),
-    ("BASKETBALL", "🏀 BASKETBALL"),
+    ("BB_WINNER", "🏀 BASKETBALL WINNER"),
 ]
 ALL = [k for k, _ in SECTIONS]
-FOOTBALL_ONLY = [k for k in ALL if k != "BASKETBALL"]
+FOOTBALL_ONLY = ["OVER", "UNDER", "1X2", "DOUBLE_CHANCE", "BTTS"]
+BASKETBALL_ONLY = ["BB_OVER", "BB_UNDER", "BB_WINNER"]
 
 MODE_SECTIONS = {
-    "tips": ALL, "football": FOOTBALL_ONLY, "basketball": ["BASKETBALL"],
-    "safe": ALL, "acca": ALL,
-    "goals": ["OVER", "UNDER", "FIRST_HALF"], "btts": ["BTTS"],
-    "over": ["OVER"], "under": ["UNDER"], "corners": ["CORNERS"],
-    "1x2": ["1X2"], "dc": ["DOUBLE_CHANCE"], "firsthalf": ["FIRST_HALF"],
+    "tips": ALL, "football": FOOTBALL_ONLY, "basketball": BASKETBALL_ONLY,
+    "safe": ALL, "acca": ALL, "totals": ["OVER", "UNDER", "BB_OVER", "BB_UNDER"],
+    "goals": ["OVER", "UNDER"], "btts": ["BTTS"],
+    "over": ["OVER"], "under": ["UNDER"], "bbover": ["BB_OVER"], "bbunder": ["BB_UNDER"],
+    "1x2": ["1X2"], "dc": ["DOUBLE_CHANCE"],
 }
 
 MODE_TITLES = {
     "tips": "ALL STRONG PICKS", "football": "FOOTBALL PICKS", "basketball": "BASKETBALL PICKS",
-    "safe": "SAFE PICKS", "acca": "ACCUMULATOR (MAX 3 LEGS)", "goals": "GOALS PICKS",
-    "btts": "BTTS PICKS", "over": "OVER PICKS", "under": "UNDER PICKS", "corners": "CORNERS PICKS",
-    "1x2": "1X2 PICKS", "dc": "DOUBLE CHANCE PICKS", "firsthalf": "1ST HALF PICKS",
+    "safe": "SAFE PICKS", "acca": "ACCUMULATOR (MAX 3 LEGS)", "totals": "OVER / UNDER PICKS",
+    "goals": "GOALS PICKS", "btts": "BTTS PICKS", "over": "OVER PICKS", "under": "UNDER PICKS",
+    "bbover": "BASKETBALL OVER PICKS", "bbunder": "BASKETBALL UNDER PICKS",
+    "1x2": "1X2 PICKS", "dc": "DOUBLE CHANCE PICKS",
 }
 
 MAX_PER_SECTION = 8
@@ -50,6 +52,8 @@ def pick_block(i, p):
         lines.append(meta)
     lines.append(f"🎯 <b>{esc(p['selection'])}</b>{odds}")
     lines.append(f"📊 {p['probability']}%  ·  ⭐ {p['confidence']}/10  ·  ⚠️ {esc(p['risk'])}")
+    if p.get("model") is not None and p.get("market") is not None:
+        lines.append(f"🧮 Model {p['model']}%  ·  Market {p['market']}%")
     return "\n".join(lines)
 
 
