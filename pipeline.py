@@ -160,7 +160,7 @@ def _football_fixtures(date):
 
 def _football_odds(date, league_order, notes):
     """Read odds league by league (and page by page) until the call budget is spent."""
-    odds, tried, failed, calls_left = {}, [], 0, FOOTBALL_ODDS_CALLS
+    odds, tried, failed, calls_left, last_err = {}, [], 0, FOOTBALL_ODDS_CALLS, ""
     for league_id, season in league_order:
         if calls_left <= 0:
             break
@@ -177,7 +177,8 @@ def _football_odds(date, league_order, notes):
                     items, total = get_odds_by_league(league_id, season, page)
                 except Exception as e:
                     failed += 1
-                    print("ODDS ERROR:", scrub(e))
+                    last_err = scrub(e)[:160]
+                    print("ODDS ERROR:", last_err)
                     break
                 parsed = {}
                 for item in items:
@@ -192,7 +193,7 @@ def _football_odds(date, league_order, notes):
                 break
             page += 1
     if failed:
-        notes.append(f"Odds were unavailable for {failed} request(s).")
+        notes.append(f"Odds were unavailable for {failed} request(s): {last_err}")
     return odds, tried
 
 
@@ -288,6 +289,7 @@ def collect_basketball(date):
     usable = usable[:MAX_BASKETBALL]
 
     research, odds_left, stats_left, odds_failed, stats_failed = [], BASKETBALL_ODDS_CALLS, BASKETBALL_STATS_CALLS, 0, 0
+    odds_err = stats_err = ""
     for s in usable:
         ok = _cache_key(date, "bb", "odds", s["id"])
         odds = store.get_json(ok)
@@ -299,7 +301,8 @@ def collect_basketball(date):
                 odds = parse_basketball_odds(basketball_odds(s["id"]))
             except Exception as e:
                 odds_failed += 1
-                print("BASKETBALL ODDS ERROR:", scrub(e))
+                odds_err = scrub(e)[:160]
+                print("BASKETBALL ODDS ERROR:", odds_err)
                 continue
             store.set_json(ok, odds, CACHE_SECONDS)
         if not odds or not s["home_id"] or not s["away_id"] or not s["league_id"] or not s["season"]:
@@ -319,7 +322,8 @@ def collect_basketball(date):
                     p = engine.basketball_profile(get_team_statistics(s["league_id"], s["season"], tid))
                 except Exception as e:
                     stats_failed += 1
-                    print("BASKETBALL STATS ERROR:", scrub(e))
+                    stats_err = scrub(e)[:160]
+                    print("BASKETBALL STATS ERROR:", stats_err)
                     continue
                 store.set_json(f"guru:bbstats:{s['league_id']}:{s['season']}:{tid}", p, STATS_CACHE_SECONDS)
                 profiles[tid] = p
@@ -335,9 +339,9 @@ def collect_basketball(date):
                              "ctx": {"model_total": model["total"], "model_home": model["eh"],
                                      "model_away": model["ea"]}})
     if odds_failed:
-        notes.append(f"Basketball odds failed for {odds_failed} game(s).")
+        notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
     if stats_failed:
-        notes.append(f"Basketball team statistics failed for {stats_failed} request(s).")
+        notes.append(f"Basketball team statistics failed for {stats_failed} request(s): {stats_err}")
     return research, notes
 
 
@@ -427,7 +431,7 @@ def _analyse(scope, date):
         except Exception as e:
             failed += 1
             print(f"{sport.upper()} DATA ERROR:", scrub(e))
-            notes.append(f"{sport.capitalize()} data was unavailable.")
+            notes.append(f"{sport.capitalize()} data was unavailable: {scrub(e)[:160]}")
     if not data:
         if failed == len(jobs):
             return None, None, notes
