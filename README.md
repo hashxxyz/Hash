@@ -141,9 +141,11 @@ You should see `"ok": true`. Then message your bot `/start`.
 | `PREDICTION_CACHE_SECONDS` | `21600` | How long match statistics are reused |
 | `STATS_CACHE_SECONDS` | `43200` | How long basketball team statistics are reused |
 | `MAX_FOOTBALL` / `MAX_BASKETBALL` | `30` / `12` | Max matches considered |
-| `FOOTBALL_ODDS_CALLS` | `3` | Football odds API calls per scan (one page ≈ 10 matches) |
+| `FOOTBALL_ODDS_CALLS` | `4` | Football odds API calls per scan (one page ≈ 10 matches) |
 | `ODDS_MAX_PAGES` | `2` | Odds pages read per league |
-| `FOOTBALL_PREDICTION_CALLS` | `6` | Football statistics calls per scan |
+| `ODDS_CACHE_SECONDS` | `3600` | How long odds are reused (longer = more matches covered over repeated scans) |
+| `BB_HISTORY_DAYS` | `14` | Free plan: days of past basketball results used for team form |
+| `FOOTBALL_PREDICTION_CALLS` | `5` | Football statistics calls per scan |
 | `BASKETBALL_ODDS_CALLS` / `BASKETBALL_STATS_CALLS` | `4` / `5` | Basketball calls per scan |
 | `ODDS_BOOKMAKER` | any | API-Sports bookmaker ID to use |
 | `GEMINI_MODELS` | see `agents.py` | Comma-separated Gemini models, tried in order |
@@ -151,6 +153,8 @@ You should see `"ok": true`. Then message your bot `/start`.
 | `LLM_TIMEOUT` / `TIME_BUDGET` | `40` / `55` | Seconds per AI request / per scan |
 
 ## Limits and good-to-know
+
+- **API-Sports free plan:** the free plan blocks the current season on league odds and team statistics ("Free plans do not have access to this season"). The bot detects this and switches automatically: football odds are read match by match, and basketball form is built from the last 14 days of results. Coverage starts small and grows over the first few scans. A paid plan removes this limit and covers every match in one scan.
 
 - **API-Sports free plan:** 100 calls/day and about 10/minute per API. Defaults keep a scan at about 10 calls per sport. Statistics are cached, so each new scan covers matches the previous one missed. On a paid plan, raise the `*_CALLS` variables.
 - **Cache:** without Redis the cache lives in memory and resets whenever Vercel starts a fresh instance, so repeated commands may cost extra API calls. Set up Redis to avoid this.

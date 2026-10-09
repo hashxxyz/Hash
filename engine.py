@@ -220,6 +220,27 @@ def basketball_profile(resp):
     return out if len(out) == 4 else {}
 
 
+def basketball_profile_from_games(team_id, games, min_games=3):
+    """Scoring averages of one team from a list of finished games {h, a, hs, as} (h/a = team ids)."""
+    f_home, a_home, f_away, a_away = [], [], [], []
+    for g in games:
+        if g["h"] == team_id:
+            f_home.append(g["hs"])
+            a_home.append(g["as"])
+        elif g["a"] == team_id:
+            f_away.append(g["as"])
+            a_away.append(g["hs"])
+    if len(f_home) + len(f_away) < min_games:
+        return {}
+    all_for, all_ag = f_home + f_away, a_home + a_away
+    mean_for, mean_ag = sum(all_for) / len(all_for), sum(all_ag) / len(all_ag)
+
+    def avg(xs, fallback):  # use the home/away split only when there are at least 2 games in it
+        return sum(xs) / len(xs) if len(xs) >= 2 else fallback
+    return {"for_home": avg(f_home, mean_for), "for_away": avg(f_away, mean_for),
+            "ag_home": avg(a_home, mean_ag), "ag_away": avg(a_away, mean_ag)}
+
+
 def basketball_model(home_profile, away_profile):
     if not home_profile or not away_profile:
         return None

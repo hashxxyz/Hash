@@ -43,3 +43,12 @@ def get_odds_by_league(league_id, season, page=1):
     if bookmaker:
         params["bookmaker"] = bookmaker
     return api_request("odds", params, paging=True)
+
+
+def get_odds_for_fixture(fixture_id):
+    """Odds for one match. Works on the free plan (no season parameter)."""
+    params = {"fixture": fixture_id}
+    bookmaker = os.environ.get("ODDS_BOOKMAKER", "").strip()
+    if bookmaker:
+        params["bookmaker"] = bookmaker
+    return api_request("odds", params)

@@ -33,3 +33,8 @@ def get_odds(game_id):
 
 def get_team_statistics(league_id, season, team_id):
     return api_request("statistics", {"league": league_id, "season": season, "team": team_id})
+
+
+def get_games_on(day):
+    """All games on one date (used to build recent form without the season statistics endpoint)."""
+    return api_request("games", {"date": day, "timezone": "Africa/Lagos"})
