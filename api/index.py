@@ -1,22 +1,23 @@
 from http.server import BaseHTTPRequestHandler
+import hmac
 import html
 import json
 import os
 import re
 import sys
-import time
 
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-COMMANDS = {"/tips", "/football", "/basketball", "/safe", "/goals", "/btts", "/acca",
-            "/over", "/under", "/corners", "/1x2", "/dc", "/firsthalf"}
-_SEEN = {}  # update_id -> time; stops duplicate replies when Telegram re-sends a webhook
+COMMANDS = {"/tips", "/football", "/basketball", "/safe", "/goals", "/btts", "/acca", "/totals",
+            "/over", "/under", "/bbover", "/bbunder", "/1x2", "/dc"}
 
-MENU = ("/tips — everything (all sections)\n/football — football only\n/basketball — basketball only\n"
-        "/over — over goals\n/under — under goals\n/corners — corners\n/1x2 — match result\n"
-        "/dc — double chance\n/firsthalf — 1st half\n/goals — over + under + 1st half\n/btts — both teams to score\n"
+MENU = ("/tips — everything (all sections)\n/totals — all over/under (football + basketball)\n"
+        "/football — football only\n/basketball — basketball only\n"
+        "/over — football over goals\n/under — football under goals\n/goals — football over + under\n"
+        "/bbover — basketball over\n/bbunder — basketball under\n"
+        "/1x2 — match result\n/dc — double chance\n/btts — both teams to score\n"
         "/safe — conservative picks\n/acca — best 3-leg accumulator")
 START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and odds and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
 HELP_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\n" + MENU + "\n\n⚠️ Probability-based analysis, not guaranteed results."
@@ -36,15 +37,19 @@ def is_allowed(chat_id):
 
 
 def is_duplicate(update_id):
+    """True when this Telegram update was already handled (Telegram re-sends webhooks it thinks failed)."""
     if update_id is None:
         return False
-    now = time.time()
-    for k in [k for k, t in _SEEN.items() if now - t > 600]:
-        _SEEN.pop(k, None)
-    if update_id in _SEEN:
+    import store
+    return not store.claim(f"guru:update:{update_id}", 600)
+
+
+def secret_ok(headers):
+    """If TELEGRAM_WEBHOOK_SECRET is set, only accept requests carrying it (set it with setWebhook secret_token)."""
+    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    if not secret:
         return True
-    _SEEN[update_id] = now
-    return False
+    return hmac.compare_digest(headers.get("X-Telegram-Bot-Api-Secret-Token", ""), secret)
 
 
 class handler(BaseHTTPRequestHandler):
@@ -70,9 +75,15 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"AI Football + Basketball Betting Guru is LIVE")
+        self.wfile.write(b"AI Betting Guru is LIVE")
 
     def do_POST(self):
+        if not secret_ok(self.headers):
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"forbidden")
+            return
         try:
             length = int(self.headers.get("Content-Length", 0))
             update = json.loads(self.rfile.read(length).decode())
