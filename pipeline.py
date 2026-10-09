@@ -450,6 +450,20 @@ def _analyse(scope, date):
     return picks, avoid, notes
 
 
+CATEGORY_PRIORITY = {"OVER": 0, "UNDER": 0, "BB_OVER": 0, "BB_UNDER": 0, "BTTS": 1, "1X2": 2, "BB_WINNER": 2, "DOUBLE_CHANCE": 3}
+
+
+def one_per_match(picks):
+    """Keep only the strongest pick of each match (confidence, then probability, then over/under before the rest)."""
+    best = {}
+    for p in picks:
+        key = (-p["confidence"], -p["probability"], CATEGORY_PRIORITY.get(p["category"], 9))
+        cur = best.get(p["match_id"])
+        if cur is None or key < cur[0]:
+            best[p["match_id"]] = (key, p)
+    return [p for _, p in best.values()]
+
+
 def _cached(scope, date):
     for s in ([scope, "both"] if scope != "both" else ["both"]):
         hit = store.get_json(_cache_key(date, "pipe", s))
@@ -480,4 +494,85 @@ def run_pipeline(mode="tips"):
     picks = [p for p in picks if p["category"] in wanted]
     if mode == "safe":
         picks = [p for p in picks if p["risk"] == "Low" and p["confidence"] >= 7]
+    picks = one_per_match(picks)  # a match appears once, with its strongest pick
     return render_report(picks, avoid, mode, date, notes)
+
+
+# ---------------------------------------------------------------- /longshot
+def _numbered_picks(date):
+    """Today's picks in a fixed order, so the numbers in /longshot stay the same between messages."""
+    hit = _cached("football", date)
+    if hit:
+        picks = hit["picks"]
+    else:
+        picks, _, notes = _analyse("football", date)
+        if picks is None:
+            return None
+        store.set_json(_cache_key(date, "pipe", "football"), {"picks": picks, "avoid": [], "notes": notes}, CACHE_SECONDS)
+    picks = [p for p in picks if p["category"] in {"OVER", "UNDER", "BTTS", "1X2", "DOUBLE_CHANCE"}]
+    picks = one_per_match(picks)
+    picks.sort(key=lambda p: (-p["confidence"], -p["probability"], p["match_id"], p["category"]))
+    return picks[:12]
+
+
+def run_longshot(args):
+    date = get_lagos_date()
+    picks = _numbered_picks(date)
+    if picks is None:
+        return "⚠️ No usable fixtures were returned today."
+    if not args:
+        if not picks:
+            return "No picks today, so there is nothing to build a longshot from."
+        lines = ["🎰 <b>LONGSHOT BUILDER</b>", "Today's legs (model probability):", ""]
+        for i, p in enumerate(picks, 1):
+            lines.append(f"{i}. {_h(p['match'])} — <b>{_h(p['selection'])}</b> ({p['probability']}%)")
+        lines += ["", "Check the real odds on your bookmaker, then send them with the leg numbers:",
+                  "<code>/longshot 1:1.25 3:1.40 4:1.18</code>", "",
+                  "Plain odds also work: <code>/longshot 1.8 2.1 1.5</code>"]
+        return "\n".join(lines)
+
+    legs, bad = [], []
+    for tok in args[:15]:
+        num, _, odd = tok.rpartition(":")
+        try:
+            o = float(odd.replace(",", "."))
+            n = int(num) if num else None
+        except ValueError:
+            bad.append(tok)
+            continue
+        if o <= 1.0:
+            bad.append(tok)
+            continue
+        pick = picks[n - 1] if n and 1 <= n <= len(picks) else None
+        if n and not pick:
+            bad.append(tok)
+            continue
+        legs.append((o, pick))
+    if bad or not legs:
+        return "❌ I could not read: " + _h(" ".join(bad or args)) + "\nUse <code>/longshot 1:1.25 3:1.40</code> or <code>/longshot 1.8 2.1</code>."
+
+    combined = 1.0
+    for o, _ in legs:
+        combined *= o
+    out = ["🎰 <b>LONGSHOT</b>", f"Legs: {len(legs)}", f"💰 Combined odds ≈ <b>{combined:.2f}</b>",
+           f"🏦 Bookmaker's implied chance ≈ {100 / combined:.1f}% (about 1 in {round(combined)}, before their margin)"]
+    modelled = [p for _, p in legs if p]
+    if len(modelled) == len(legs):
+        chance = 1.0
+        for p in modelled:
+            chance *= p["probability"] / 100
+        out.append(f"🧮 Model's chance ≈ {chance * 100:.1f}% (legs treated as independent)")
+        ids = [p["match_id"] for p in modelled]
+        if len(set(ids)) < len(ids):
+            out.append("⚠️ Two legs are from the same match, so they are not independent. The real chance is different.")
+        fair = 1 / chance if chance else 0
+        verdict = ("the bookmaker is paying less than the model's own fair price, so this is poor value"
+                   if combined < fair else "the bookmaker pays more than the model's fair price")
+        out.append(f"📉 Model's fair odds ≈ {fair:.1f}, so {verdict}. The model is untested; do not trust this number much.")
+    out.append("\nMost longshots lose. Stake only what you would happily lose, and keep it apart from your normal bets.")
+    return "\n".join(out)
+
+
+def _h(x):
+    import html
+    return html.escape(str(x), quote=False)
