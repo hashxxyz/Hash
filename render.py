@@ -1,5 +1,6 @@
 """Turns structured picks into a clean Telegram (HTML) message. No markdown tables."""
 import html
+import os
 import re
 from datetime import datetime
 
@@ -36,6 +37,7 @@ MODE_TITLES = {
 }
 
 MAX_PER_SECTION = 8
+BASKETBALL_ON = os.environ.get("ENABLE_BASKETBALL", "").strip().lower() in {"1", "true", "yes"}
 
 
 def esc(x):
@@ -100,6 +102,8 @@ def render_report(picks, avoid, mode, date, notes=None):
         shown = 0
         for key, title in SECTIONS:
             if key not in MODE_SECTIONS.get(mode, ALL):
+                continue
+            if key.startswith("BB_") and not BASKETBALL_ON:
                 continue
             items = [p for p in picks if p["category"] == key]
             items.sort(key=lambda p: (p["confidence"], p["probability"]), reverse=True)

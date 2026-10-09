@@ -278,3 +278,68 @@ def basketball_candidates(odds, model, home, away, min_odds=1.30, max_odds=3.0, 
             _keep(best, _mk("BB_WINNER", f"BB_WINNER:{side.lower()}", f"{name} to win", w[side], pm, pk,
                             0.5, 0.30, min_p, min_odds, max_odds))
     return _ranked(best)
+
+
+# ---------------------------------------------------------------- football model from results (no odds)
+def _team_rates(team_id, games, decay=0.93):
+    """Recency-weighted goals scored / conceded per game for one team. Returns (gf, ga, n) or None."""
+    rows = [(g["hs"], g["as"]) if g["h"] == team_id else (g["as"], g["hs"])
+            for g in games if team_id in (g["h"], g["a"])]
+    if not rows:
+        return None
+    n = len(rows)
+    ws = [decay ** (n - 1 - i) for i in range(n)]  # games are sorted oldest -> newest
+    tw = sum(ws)
+    return (sum(w * r[0] for w, r in zip(ws, rows)) / tw, sum(w * r[1] for w, r in zip(ws, rows)) / tw, n)
+
+
+def football_model_from_results(home_id, away_id, games, min_games=3, shrink=5.0):
+    """Goals model from a competition's finished matches [{h, a, hs, as}] sorted oldest first."""
+    if len(games) < 20:
+        return None
+    mu_h = sum(g["hs"] for g in games) / len(games)
+    mu_a = sum(g["as"] for g in games) / len(games)
+    mu_t = (mu_h + mu_a) / 2
+    th, ta = _team_rates(home_id, games), _team_rates(away_id, games)
+    if not th or not ta or min(th[2], ta[2]) < min_games:
+        return None
+
+    def strength(rate, n):  # shrink toward the league average when a team has few games
+        return (rate * n + mu_t * shrink) / (n + shrink) / mu_t
+
+    att_h, def_h = strength(th[0], th[2]), strength(th[1], th[2])
+    att_a, def_a = strength(ta[0], ta[2]), strength(ta[1], ta[2])
+    lam_h = min(max(mu_h * att_h * def_a, 0.2), 3.5)
+    lam_a = min(max(mu_a * att_a * def_h, 0.2), 3.5)
+    ph, pd, pa = score_grid(lam_h, lam_a)
+    return {"lh": round(lam_h, 2), "la": round(lam_a, 2), "exp": round(lam_h + lam_a, 3),
+            "btts": round((1 - math.exp(-lam_h)) * (1 - math.exp(-lam_a)), 4),
+            "x12": [round(ph, 4), round(pd, 4), round(pa, 4)], "n": min(th[2], ta[2])}
+
+
+def _mk_model_only(cat, key, sel, pm, offset, min_p):
+    """No market to compare with: probability is the model's, capped lower than the odds-based picks."""
+    p = min(0.85, pm)
+    if p < min_p:
+        return None
+    conf = max(1, min(8, round((p - offset) * 20)))
+    return {"k": key, "c": cat, "s": sel, "o": None, "p": round(p * 100), "pm": round(pm * 100), "pk": None,
+            "n": conf, "r": "Low" if p >= 0.78 else "Medium" if p >= 0.65 else "High", "ev": 0.0}
+
+
+def football_candidates_model(model, home, away, min_p=0.60):
+    best, lam = {}, model["exp"]
+    for line in (1.5, 2.5, 3.5):
+        po = p_total_over(lam, line)
+        for d, pm in (("over", po), ("under", 1 - po)):
+            cat = d.upper()
+            _keep(best, _mk_model_only(cat, f"{cat}:{line:g}", f"{d.title()} {line:g} Goals", pm, 0.35, min_p))
+    for lab, pm in (("Yes", model["btts"]), ("No", 1 - model["btts"])):
+        _keep(best, _mk_model_only("BTTS", f"BTTS:{lab.lower()}", f"BTTS {lab}", pm, 0.35, min_p))
+    ph, pd, pa = model["x12"]
+    for k, name, pm in (("home", f"{home} to win", ph), ("draw", "Draw", pd), ("away", f"{away} to win", pa)):
+        _keep(best, _mk_model_only("1X2", f"1X2:{k}", name, pm, 0.35, min_p))
+    for k, name, pm in (("home_draw", f"{home} or Draw", ph + pd), ("draw_away", f"Draw or {away}", pd + pa),
+                        ("home_away", f"{home} or {away}", ph + pa)):
+        _keep(best, _mk_model_only("DOUBLE_CHANCE", f"DC:{k}", name, min(pm, 0.97), 0.35, min_p))
+    return _ranked(best)

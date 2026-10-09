@@ -70,7 +70,7 @@ pipeline.py          Data collection, caching, AI review, validation
 engine.py            Pricing models (football Poisson, basketball scoring) and candidate bets
 store.py             Cache and duplicate-update guard (Redis if configured, else in-memory)
 agents.py            Gemini / Groq / OpenRouter clients, fallback, key scrubbing
-football_data.py     API-Sports football client (paginated odds)
+football_data.py     Football-Data.org client (fixtures + season results)
 basketball_data.py   API-Sports basketball client
 render.py            Telegram message formatting
 vercel.json          Function settings (60 s max duration)
@@ -83,7 +83,8 @@ vercel.json          Function settings (60 s max duration)
 | Service | Used for | Where |
 |---|---|---|
 | Telegram bot token | Receiving and sending messages | [@BotFather](https://t.me/BotFather) → `/newbot` |
-| API-Sports key | Fixtures, odds, statistics (football and basketball) | [api-sports.io](https://api-sports.io) |
+| Football-Data.org key | Football fixtures and results (free tier) | [football-data.org](https://www.football-data.org/client/register) |
+| API-Sports key (optional) | Basketball only, needs a plan covering the current season | [api-sports.io](https://api-sports.io) |
 | Gemini key | Main AI provider | [Google AI Studio](https://aistudio.google.com) |
 | Groq key | First fallback | [console.groq.com](https://console.groq.com) |
 | OpenRouter key | Second fallback | [openrouter.ai](https://openrouter.ai) |
@@ -117,7 +118,9 @@ You should see `"ok": true`. Then message your bot `/start`.
 | Variable | Description |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
-| `API_FOOTBALL_KEY` | API-Sports key (used for football and basketball) |
+| `FOOTBALL_DATA_KEY` | Football-Data.org API token (football) |
+| `API_FOOTBALL_KEY` | Optional. API-Sports key, only for basketball with `ENABLE_BASKETBALL=true` |
+| `ENABLE_BASKETBALL` | Optional. Leave unset: football only |
 | `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` | At least one required; all three recommended |
 
 **Strongly recommended**
@@ -153,6 +156,8 @@ You should see `"ok": true`. Then message your bot `/start`.
 | `LLM_TIMEOUT` / `TIME_BUDGET` | `40` / `55` | Seconds per AI request / per scan |
 
 ## Limits and good-to-know
+
+- **Football-Data.org free tier:** 12 competitions (Premier League, Championship, Bundesliga, Serie A, La Liga, Ligue 1, Eredivisie, Primeira Liga, Champions League, Brazilian Serie A, World Cup, Euros), 10 calls/minute, and **no odds**. Football picks are model-only: a Poisson goals model built from this season's results. There is no market check, so treat the probabilities as rough. `FD_MAX_COMPETITIONS` (8) caps calls per scan; results are cached 12 hours.
 
 - **API-Sports free plan:** the free plan blocks the current season on league odds and team statistics ("Free plans do not have access to this season"). The bot detects this and switches automatically: football odds are read match by match, and basketball form is built from the last 14 days of results. Coverage starts small and grows over the first few scans. A paid plan removes this limit and covers every match in one scan.
 

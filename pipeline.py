@@ -1,14 +1,15 @@
 import json
 import os
 import time
+from datetime import datetime, timedelta
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import engine
 import store
 from agents import ask_json, scrub
-from basketball_data import get_today_games, get_odds as basketball_odds, get_team_statistics
-from football_data import get_today_fixtures, get_predictions, get_odds_by_league, get_lagos_date
+from basketball_data import get_today_games, get_odds as basketball_odds, get_team_statistics, get_games_on
+from football_data import get_today_matches, get_finished_matches, get_lagos_date, to_lagos_hhmm
 from render import render_report, MODE_SECTIONS
 
 
@@ -28,12 +29,12 @@ def _float_env(name, default):
 
 
 # API-Sports free plan = 100 calls/day and about 10 calls/minute PER API. Defaults keep a football scan at
-# 1 + 3 + 6 = 10 calls and a basketball scan at 1 + 4 + 5 = 10 calls. Odds, predictions and team statistics are
+# 1 + 4 + 5 = 10 calls and a basketball scan at 1 + 4 + 5 = 10 calls. Odds, predictions and team statistics are
 # cached, so repeated scans spend their calls on matches that are not covered yet.
 MAX_FOOTBALL = _int_env("MAX_FOOTBALL", 30)
-FOOTBALL_ODDS_CALLS = _int_env("FOOTBALL_ODDS_CALLS", 3)         # odds API calls (one page = about 10 matches)
+FOOTBALL_ODDS_CALLS = _int_env("FOOTBALL_ODDS_CALLS", 4)         # odds API calls per scan
 ODDS_MAX_PAGES = _int_env("ODDS_MAX_PAGES", 2)                   # pages read per league
-FOOTBALL_PREDICTION_CALLS = _int_env("FOOTBALL_PREDICTION_CALLS", 6)
+FOOTBALL_PREDICTION_CALLS = _int_env("FOOTBALL_PREDICTION_CALLS", 5)
 MAX_BASKETBALL = _int_env("MAX_BASKETBALL", 12)
 BASKETBALL_ODDS_CALLS = _int_env("BASKETBALL_ODDS_CALLS", 4)
 BASKETBALL_STATS_CALLS = _int_env("BASKETBALL_STATS_CALLS", 5)
@@ -45,6 +46,8 @@ MAX_ODDS = _float_env("MAX_ODDS", 3.0)
 BB_MIN_GAP = _float_env("BB_MIN_GAP", 4.0)                       # points between model total and the line
 MAX_PROBABILITY = 88                                              # never show 100%
 CACHE_SECONDS = _int_env("CACHE_SECONDS", 30 * 60)
+ODDS_CACHE_SECONDS = _int_env("ODDS_CACHE_SECONDS", 3600)        # longer = more matches covered over repeated scans
+BB_HISTORY_DAYS = _int_env("BB_HISTORY_DAYS", 14)                # recent-results window for basketball form
 PREDICTION_CACHE_SECONDS = _int_env("PREDICTION_CACHE_SECONDS", 6 * 3600)
 STATS_CACHE_SECONDS = _int_env("STATS_CACHE_SECONDS", 12 * 3600)
 TIME_BUDGET = _int_env("TIME_BUDGET", 55)
@@ -66,40 +69,6 @@ RISK_ORDER = {"Low": 0, "Medium": 1, "High": 2}
 
 def _cache_key(date, *parts):
     return ":".join(["guru", date, *map(str, parts)])
-
-
-# ---------------------------------------------------------------- odds parsing
-LINE_BOUNDS = {"Goals O/U": (0.5, 4.5)}
-
-
-def _football_market(name):
-    n = str(name or "").lower().strip()
-    return {"match winner": "1X2", "double chance": "Double Chance", "both teams score": "BTTS",
-            "goals over/under": "Goals O/U"}.get(n)
-
-
-def parse_football_odds(item):
-    out = {}
-    for bm in item.get("bookmakers") or []:
-        for bet in bm.get("bets") or []:
-            key = _football_market(bet.get("name"))
-            if not key or key in out:
-                continue
-            values = {}
-            for v in bet.get("values") or []:
-                try:
-                    odd = float(v.get("odd"))
-                except (TypeError, ValueError):
-                    continue
-                if key in LINE_BOUNDS:
-                    _, ln = engine.parse_ou(v.get("value"))
-                    lo, hi = LINE_BOUNDS[key]
-                    if ln is None or not lo <= ln <= hi:
-                        continue
-                values[str(v.get("value"))] = odd
-            if values:
-                out[key] = values
-    return out
 
 
 def _trim_totals(values, keep=3):
@@ -138,123 +107,93 @@ def parse_basketball_odds(items):
     return out
 
 
-# ---------------------------------------------------------------- football collection
-def football_summary(f):
-    x, l, t = f.get("fixture", {}), f.get("league", {}), f.get("teams", {})
-    date = x.get("date") or ""
-    return {"id": x.get("id"), "kickoff": date[11:16], "status": (x.get("status") or {}).get("short"),
-            "league": l.get("name"), "country": l.get("country"), "league_id": l.get("id"),
-            "season": l.get("season"), "home": (t.get("home") or {}).get("name"),
-            "away": (t.get("away") or {}).get("name")}
+# ---------------------------------------------------------------- football collection (Football-Data.org)
+# Free tier = 10 calls/minute and no odds. A scan costs 1 call for today's matches plus 1 call per competition
+# that has a match today (results are cached for STATS_CACHE_SECONDS). Picks come from the goals model alone.
+FD_MAX_COMPETITIONS = _int_env("FD_MAX_COMPETITIONS", 8)
+FD_RESULTS_CACHE = _int_env("FD_RESULTS_CACHE_SECONDS", 12 * 3600)
+ENABLE_BASKETBALL = os.environ.get("ENABLE_BASKETBALL", "").strip().lower() in {"1", "true", "yes"}
+
+
+def football_summary(m, date):
+    comp, area = m.get("competition") or {}, m.get("area") or {}
+    day, hhmm = to_lagos_hhmm(m.get("utcDate"))
+    return {"id": m.get("id"), "day": day, "kickoff": hhmm, "status": m.get("status"),
+            "league": comp.get("name"), "code": comp.get("code"), "country": area.get("name"),
+            "home": (m.get("homeTeam") or {}).get("name"), "away": (m.get("awayTeam") or {}).get("name"),
+            "home_id": (m.get("homeTeam") or {}).get("id"), "away_id": (m.get("awayTeam") or {}).get("id")}
 
 
 def _football_fixtures(date):
-    key = _cache_key(date, "fixtures")
+    key = _cache_key(date, "fd", "fixtures")
     usable = store.get_json(key)
     if usable is None:
-        usable = [s for s in map(football_summary, get_today_fixtures())
-                  if s["status"] in {"NS", "TBD"} and s["home"] and s["away"] and s["id"]]
+        usable = [s for s in (football_summary(m, date) for m in get_today_matches(date))
+                  if s["day"] == date and s["status"] in {"SCHEDULED", "TIMED"}
+                  and s["home_id"] and s["away_id"] and s["id"]]
         store.set_json(key, usable, CACHE_SECONDS)
     return usable
 
 
-def _football_odds(date, league_order, notes):
-    """Read odds league by league (and page by page) until the call budget is spent."""
-    odds, tried, failed, calls_left, last_err = {}, [], 0, FOOTBALL_ODDS_CALLS, ""
-    for league_id, season in league_order:
-        if calls_left <= 0:
-            break
-        tried.append((league_id, season))
-        page = 1
-        while True:
-            ck = _cache_key(date, "odds", league_id, season, page)
-            hit = store.get_json(ck)
-            if hit is None:
-                if calls_left <= 0:
-                    break
-                calls_left -= 1
-                try:
-                    items, total = get_odds_by_league(league_id, season, page)
-                except Exception as e:
-                    failed += 1
-                    last_err = scrub(e)[:160]
-                    print("ODDS ERROR:", last_err)
-                    break
-                parsed = {}
-                for item in items:
-                    fid = (item.get("fixture") or {}).get("id")
-                    p = parse_football_odds(item)
-                    if fid and p:
-                        parsed[str(fid)] = p
-                hit = {"odds": parsed, "total": total}
-                store.set_json(ck, hit, CACHE_SECONDS)
-            odds.update(hit["odds"])
-            if page >= hit["total"] or page >= ODDS_MAX_PAGES:
-                break
-            page += 1
-    if failed:
-        notes.append(f"Odds were unavailable for {failed} request(s): {last_err}")
-    return odds, tried
-
-
-def _football_model(date, fixture_id, budget):
-    """Cached goals model for one fixture. Returns (model or {}, calls_used)."""
-    ck = _cache_key(date, "pred", fixture_id)
-    hit = store.get_json(ck)
-    if hit is not None:
-        return hit, 0
-    if budget <= 0:
-        return None, 0
-    try:
-        model = engine.football_model(get_predictions(fixture_id)) or {}
-    except Exception as e:
-        print("PREDICTION ERROR:", scrub(e))
-        return None, 1
-    store.set_json(ck, model, PREDICTION_CACHE_SECONDS)
-    return model, 1
+def _competition_results(code):
+    key = f"guru:fdresults:{code}"
+    hit = store.get_json(key)
+    if hit is None:
+        hit = []
+        for m in get_finished_matches(code):
+            ft = ((m.get("score") or {}).get("fullTime") or {})
+            h, a = (m.get("homeTeam") or {}).get("id"), (m.get("awayTeam") or {}).get("id")
+            if None not in (ft.get("home"), ft.get("away"), h, a):
+                hit.append({"h": h, "a": a, "hs": ft["home"], "as": ft["away"], "d": (m.get("utcDate") or "")[:10]})
+        hit.sort(key=lambda g: g["d"])
+        store.set_json(key, hit, FD_RESULTS_CACHE)
+    return hit
 
 
 def collect_football(date):
     notes, usable = [], _football_fixtures(date)
-    counts = Counter(s["league_id"] for s in usable)
+    counts = Counter(s["code"] for s in usable)
 
-    def rank(s):  # top leagues first, then leagues with the most matches today
-        top = ((s["league"] or "").lower(), (s["country"] or "").lower()) in PRIORITY_LEAGUES
-        return (not top, -counts[s["league_id"]], s["league_id"] or 0, s["kickoff"])
+    def rank(s):  # top competitions first, then the ones with the most matches today
+        return (-counts[s["code"]], s["code"] or "", s["kickoff"])
 
     usable.sort(key=rank)
-    league_order = []
+    codes = []
     for s in usable:
-        k = (s["league_id"], s["season"])
-        if s["league_id"] and k not in league_order:
-            league_order.append(k)
+        if s["code"] and s["code"] not in codes:
+            codes.append(s["code"])
+    results, failed, last_err = {}, 0, ""
+    for code in codes[:FD_MAX_COMPETITIONS]:
+        try:
+            results[code] = _competition_results(code)
+        except Exception as e:
+            failed += 1
+            last_err = scrub(e)[:160]
+            print("RESULTS ERROR:", last_err)
+    if failed:
+        notes.append(f"Results were unavailable for {failed} competition(s): {last_err}")
+    if len(codes) > FD_MAX_COMPETITIONS:
+        notes.append(f"Only the {FD_MAX_COMPETITIONS} busiest competitions were analysed today.")
 
-    odds, tried = _football_odds(date, league_order, notes)
-    chosen = [s for s in usable if (s["league_id"], s["season"]) in tried and str(s["id"]) in odds]
-    chosen.sort(key=rank)
-    chosen = chosen[:MAX_FOOTBALL]
-
-    research, budget, skipped = [], FOOTBALL_PREDICTION_CALLS, 0
-    for s in chosen:
-        model, used = _football_model(date, s["id"], budget)
-        budget -= used
-        if model is None:
-            skipped += 1
+    research = []
+    for s in usable[:MAX_FOOTBALL]:
+        games = results.get(s["code"])
+        if not games:
+            continue
+        model = engine.football_model_from_results(s["home_id"], s["away_id"], games)
         if not model:
             continue
-        cands = engine.football_candidates(odds[str(s["id"])], model, s["home"], s["away"],
-                                           MIN_ODDS, MAX_ODDS, MIN_PROB)
-        cands = [c for c in cands if c["n"] >= MIN_CONFIDENCE]
+        cands = [c for c in engine.football_candidates_model(model, s["home"], s["away"], MIN_PROB)
+                 if c["n"] >= MIN_CONFIDENCE]
         if cands:
             research.append({"id": f"f{s['id']}", "sport": "football", "match": f"{s['home']} vs {s['away']}",
                              "league": f"{s['league']} ({s['country']})" if s["country"] else s["league"],
                              "kickoff": s["kickoff"], "cands": cands,
-                             "ctx": {"exp_goals": model["exp"], "h2h_avg_goals": model["h2h_avg"],
-                                     "h2h_n": model["h2h_n"], "api_advice": model["advice"]}})
-    if usable and not chosen:
-        notes.append("No odds were returned for today's leagues.")
-    elif skipped:
-        notes.append(f"{skipped} match(es) were not analysed yet (API call budget). Run again later to cover more.")
+                             "ctx": {"exp_goals": model["exp"], "home_xg": model["lh"], "away_xg": model["la"],
+                                     "games_used": model["n"]}})
+    if usable and not results:
+        notes.append("No competition results could be loaded, so no match could be modelled.")
+    notes.append("Football picks come from a goals model on this season's results. No bookmaker odds are used.")
     return research, notes
 
 
@@ -277,9 +216,46 @@ def _basketball_games(date):
     return usable
 
 
-def _basketball_profile(date, game, team_id):
-    ck = f"guru:bbstats:{game['league_id']}:{game['season']}:{team_id}"
-    return store.get_json(ck)
+def _basketball_profile(game, team_id):
+    return store.get_json(f"guru:bbstats:{game['league_id']}:{game['season']}:{team_id}")
+
+
+def _bb_day_results(day):
+    out = []
+    for g in get_games_on(day):
+        if str((g.get("status") or {}).get("short") or "").upper() not in {"FT", "AOT"}:
+            continue
+        t, sc = g.get("teams") or {}, g.get("scores") or {}
+        hs, aws = (sc.get("home") or {}).get("total"), (sc.get("away") or {}).get("total")
+        h, a = (t.get("home") or {}).get("id"), (t.get("away") or {}).get("id")
+        if None not in (hs, aws, h, a):
+            out.append({"h": h, "a": a, "hs": hs, "as": aws})
+    return out
+
+
+def _bb_history(date, budget):
+    """Finished games of the last BB_HISTORY_DAYS days. Each past day is cached for a week, so the window
+    fills in over the first few scans (free-plan substitute for season statistics)."""
+    games, failed, last_err = [], 0, ""
+    today = datetime.strptime(date, "%Y-%m-%d").date()
+    for d in range(1, BB_HISTORY_DAYS + 1):
+        day = (today - timedelta(days=d)).isoformat()
+        ck = f"guru:bbday:{day}"
+        hit = store.get_json(ck)
+        if hit is None:
+            if budget <= 0:
+                continue
+            budget -= 1
+            try:
+                hit = _bb_day_results(day)
+            except Exception as e:
+                failed += 1
+                last_err = scrub(e)[:160]
+                print("BASKETBALL HISTORY ERROR:", last_err)
+                continue
+            store.set_json(ck, hit, 7 * 24 * 3600)
+        games.extend(hit)
+    return games, budget, failed, last_err
 
 
 def collect_basketball(date):
@@ -288,8 +264,7 @@ def collect_basketball(date):
     usable.sort(key=lambda s: ((s["league"] or "").lower() not in PRIORITY_BASKETBALL, s["kickoff"]))
     usable = usable[:MAX_BASKETBALL]
 
-    research, odds_left, stats_left, odds_failed, stats_failed = [], BASKETBALL_ODDS_CALLS, BASKETBALL_STATS_CALLS, 0, 0
-    odds_err = stats_err = ""
+    priced, odds_left, odds_failed, odds_err = [], BASKETBALL_ODDS_CALLS, 0, ""
     for s in usable:
         ok = _cache_key(date, "bb", "odds", s["id"])
         odds = store.get_json(ok)
@@ -304,29 +279,48 @@ def collect_basketball(date):
                 odds_err = scrub(e)[:160]
                 print("BASKETBALL ODDS ERROR:", odds_err)
                 continue
-            store.set_json(ok, odds, CACHE_SECONDS)
-        if not odds or not s["home_id"] or not s["away_id"] or not s["league_id"] or not s["season"]:
-            continue
+            store.set_json(ok, odds, ODDS_CACHE_SECONDS)
+        if odds and s["home_id"] and s["away_id"]:
+            priced.append((s, odds))
 
-        profiles, missing = {}, []
-        for tid in (s["home_id"], s["away_id"]):
-            p = _basketball_profile(date, s, tid)
-            if p is None:
-                missing.append(tid)
-            else:
-                profiles[tid] = p
-        if missing and len(missing) <= stats_left:
-            for tid in missing:
-                stats_left -= 1
-                try:
-                    p = engine.basketball_profile(get_team_statistics(s["league_id"], s["season"], tid))
-                except Exception as e:
-                    stats_failed += 1
-                    stats_err = scrub(e)[:160]
-                    print("BASKETBALL STATS ERROR:", stats_err)
-                    continue
-                store.set_json(f"guru:bbstats:{s['league_id']}:{s['season']}:{tid}", p, STATS_CACHE_SECONDS)
-                profiles[tid] = p
+    mode_key = _cache_key(date, "bb_stats_mode")
+    window = store.get_json(mode_key) == "window"
+    stats_left, stats_failed, stats_err, history = BASKETBALL_STATS_CALLS, 0, "", None
+    research = []
+    for s, odds in priced:
+        profiles = {}
+        if not window and s["league_id"] and s["season"]:
+            missing = []
+            for tid in (s["home_id"], s["away_id"]):
+                p = _basketball_profile(s, tid)
+                if p is None:
+                    missing.append(tid)
+                else:
+                    profiles[tid] = p
+            if missing and len(missing) <= stats_left:
+                for tid in missing:
+                    stats_left -= 1
+                    try:
+                        p = engine.basketball_profile(get_team_statistics(s["league_id"], s["season"], tid))
+                    except Exception as e:
+                        stats_err = scrub(e)[:160]
+                        print("BASKETBALL STATS ERROR:", stats_err)
+                        if _is_plan_error(stats_err):  # plan can't read season statistics: use recent results
+                            window = True
+                            store.set_json(mode_key, "window", 24 * 3600)
+                            stats_err = ""
+                        else:
+                            stats_failed += 1
+                        break
+                    store.set_json(f"guru:bbstats:{s['league_id']}:{s['season']}:{tid}", p, STATS_CACHE_SECONDS)
+                    profiles[tid] = p
+        if window:
+            if history is None:
+                history, stats_left, f, err = _bb_history(date, stats_left)
+                stats_failed += f
+                stats_err = err or stats_err
+            profiles = {tid: engine.basketball_profile_from_games(tid, history)
+                        for tid in (s["home_id"], s["away_id"])}
         model = engine.basketball_model(profiles.get(s["home_id"]), profiles.get(s["away_id"]))
         if not model:
             continue
@@ -338,10 +332,13 @@ def collect_basketball(date):
                              "league": s["league"], "kickoff": s["kickoff"], "cands": cands,
                              "ctx": {"model_total": model["total"], "model_home": model["eh"],
                                      "model_away": model["ea"]}})
+    if window:
+        notes.append("Free API plan: basketball form comes from the last "
+                     f"{BB_HISTORY_DAYS} days of results, which fills in over the first few scans.")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
     if stats_failed:
-        notes.append(f"Basketball team statistics failed for {stats_failed} request(s): {stats_err}")
+        notes.append(f"Basketball form data failed for {stats_failed} request(s): {stats_err}")
     return research, notes
 
 
@@ -354,14 +351,15 @@ def build_prompt(date, scope, data):
 Date (Africa/Lagos): {date}. Scope: {scope}.
 
 Each match in DATA has "cands": bets already priced by a statistical model (Poisson goals model for football,
-scoring-average model for basketball) and compared with bookmaker odds. Fields: k = key, c = category,
-s = selection, o = odds, p = blended probability %, pm = model %, pk = bookmaker no-margin %,
+scoring-average model for basketball). Football candidates have no bookmaker odds (o and pk are null); basketball
+ones are compared with bookmaker odds. Fields: k = key, c = category,
+s = selection, o = odds, p = probability %, pm = model %, pk = bookmaker no-margin % (or null),
 n = confidence 1-10, r = base risk. "ctx" holds supporting numbers (expected goals / points, head-to-head).
 
 TASK: choose the strongest bets from the candidates.
 - Pick ONLY from the supplied cands, using the exact id and k. Never invent or change a selection, odds or number.
 - At most one pick per category per match and at most 3 per match.
-- Prefer picks where pm and pk are close, p is high and n is high. Skip anything that looks thin, contradicted by ctx,
+- Prefer picks where p is high and n is high (and pm and pk are close when pk exists). Skip anything that looks thin, contradicted by ctx,
   or volatile. Do not pad: fewer strong picks beat many weak ones.
 - risk: Low, Medium or High. You may raise the base risk r, never lower it.
 - avoid: up to 4 matches that look too volatile (id only).
@@ -463,6 +461,11 @@ def run_pipeline(mode="tips"):
     date = get_lagos_date()
     scope = ("basketball" if mode in {"basketball", "bbover", "bbunder"}
              else "both" if mode in {"tips", "acca", "safe", "totals"} else "football")
+    if not ENABLE_BASKETBALL:  # basketball still needs an API-Sports plan that covers the current season
+        if scope == "basketball":
+            return ("🏀 Basketball is switched off. Football-Data.org covers football only. "
+                    "Set ENABLE_BASKETBALL=true to use the API-Sports basketball scan.")
+        scope = "football"
     hit = _cached(scope, date)
     if hit:
         picks, avoid, notes = hit["picks"], hit["avoid"], hit["notes"]
