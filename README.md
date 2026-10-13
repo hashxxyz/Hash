@@ -71,7 +71,7 @@ engine.py            Pricing models (football Poisson, basketball scoring) and c
 store.py             Cache and duplicate-update guard (Redis if configured, else in-memory)
 agents.py            Gemini / Groq / OpenRouter clients, fallback, key scrubbing
 football_data.py     Football-Data.org client (fixtures + season results)
-basketball_data.py   API-Sports basketball client
+basketball_data.py   ESPN basketball feed (no key)
 render.py            Telegram message formatting
 vercel.json          Function settings (60 s max duration)
 ```
@@ -119,8 +119,8 @@ You should see `"ok": true`. Then message your bot `/start`.
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot token from BotFather |
 | `FOOTBALL_DATA_KEY` | Football-Data.org API token (football) |
-| `API_FOOTBALL_KEY` | Optional. API-Sports key, only for basketball with `ENABLE_BASKETBALL=true` |
-| `ENABLE_BASKETBALL` | Optional. Leave unset: football only |
+| `ENABLE_BASKETBALL` | Optional. On by default; set `false` to turn basketball off |
+| `BB_LEAGUES` | Optional. ESPN leagues to scan, default `nba,wnba` |
 | `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY` | At least one required; all three recommended |
 
 **Strongly recommended**

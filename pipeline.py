@@ -112,7 +112,12 @@ def parse_basketball_odds(items):
 # that has a match today (results are cached for STATS_CACHE_SECONDS). Picks come from the goals model alone.
 FD_MAX_COMPETITIONS = _int_env("FD_MAX_COMPETITIONS", 8)
 FD_RESULTS_CACHE = _int_env("FD_RESULTS_CACHE_SECONDS", 12 * 3600)
-ENABLE_BASKETBALL = os.environ.get("ENABLE_BASKETBALL", "").strip().lower() in {"1", "true", "yes"}
+ENABLE_BASKETBALL = os.environ.get("ENABLE_BASKETBALL", "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _is_plan_error(msg):
+    m = str(msg).lower()
+    return "plan" in m or "subscription" in m or "not available" in m
 
 
 def football_summary(m, date):
@@ -334,7 +339,7 @@ def collect_basketball(date):
                              "ctx": {"model_total": model["total"], "model_home": model["eh"],
                                      "model_away": model["ea"]}})
     if window:
-        notes.append("Free API plan: basketball form comes from the last "
+        notes.append("Basketball form comes from the last "
                      f"{BB_HISTORY_DAYS} days of results, which fills in over the first few scans.")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
@@ -476,10 +481,9 @@ def run_pipeline(mode="tips"):
     date = get_lagos_date()
     scope = ("basketball" if mode in {"basketball", "bbover", "bbunder"}
              else "both" if mode in {"tips", "acca", "safe", "totals"} else "football")
-    if not ENABLE_BASKETBALL:  # basketball still needs an API-Sports plan that covers the current season
+    if not ENABLE_BASKETBALL:  # on by default; set ENABLE_BASKETBALL=false to turn it off
         if scope == "basketball":
-            return ("🏀 Basketball is switched off. Football-Data.org covers football only. "
-                    "Set ENABLE_BASKETBALL=true to use the API-Sports basketball scan.")
+            return "🏀 Basketball is switched off (ENABLE_BASKETBALL=false)."
         scope = "football"
     hit = _cached(scope, date)
     if hit:

@@ -37,7 +37,7 @@ MODE_TITLES = {
 }
 
 MAX_PER_SECTION = 8
-BASKETBALL_ON = os.environ.get("ENABLE_BASKETBALL", "").strip().lower() in {"1", "true", "yes"}
+BASKETBALL_ON = os.environ.get("ENABLE_BASKETBALL", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def esc(x):
