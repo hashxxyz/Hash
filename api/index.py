@@ -113,7 +113,7 @@ class handler(BaseHTTPRequestHandler):
                     self.send_telegram(chat_id, "❌ Longshot failed this time. Please try again in a minute.")
             elif cmd in COMMANDS:
                 mode = cmd[1:]
-                label = "football" if mode in {"tips", "acca"} and not os.environ.get("ENABLE_BASKETBALL") else "football + basketball" if mode in {"tips", "acca"} else mode
+                label = "football" if mode in {"tips", "acca"} and os.environ.get("ENABLE_BASKETBALL", "true").strip().lower() in {"0", "false", "no", "off"} else "football + basketball" if mode in {"tips", "acca"} else mode
                 self.send_telegram(chat_id, f"🧠 Scanning today's {label}...\n\nData → research → AI analysis → final picks")
                 try:
                     from pipeline import run_pipeline
