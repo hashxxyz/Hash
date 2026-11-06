@@ -2,7 +2,7 @@
 import html
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 LINE = "━━━━━━━━━━━━━━"
 
@@ -59,19 +59,27 @@ def pick_block(i, p):
     return "\n".join(lines)
 
 
-def _header(mode, date):
+def _header(mode, date, days=1):
     try:
-        pretty = datetime.strptime(date, "%Y-%m-%d").strftime("%a %d %b %Y")
+        d0 = datetime.strptime(date, "%Y-%m-%d")
+        pretty = d0.strftime("%a %d %b %Y")
+        if days > 1:
+            pretty = d0.strftime("%a %d %b") + " → " + (d0 + timedelta(days=days - 1)).strftime("%a %d %b %Y")
     except ValueError:
         pretty = date
-    return f"🔥 <b>AI BETTING GURU</b>\n<b>{MODE_TITLES.get(mode, 'PICKS')}</b>\n📅 {pretty}  ·  times in Lagos (WAT)"
+    title = MODE_TITLES.get(mode, "PICKS")
+    if days > 1:
+        title = f"NEXT {days} DAYS · {title}"
+    return f"🔥 <b>AI BETTING GURU</b>\n<b>{title}</b>\n📅 {pretty}  ·  times in Lagos (WAT)"
 
 
 FOOTER = "⚠️ <i>Probability-based analysis, not guaranteed results. Bet responsibly.</i>"
 
 
-def render_report(picks, avoid, mode, date, notes=None):
-    out = [_header(mode, date)]
+def render_report(picks, avoid, mode, date, notes=None, days=1):
+    out = [_header(mode, date, days)]
+    when = "today" if days <= 1 else "this week"
+    per_section = MAX_PER_SECTION if days <= 1 else MAX_PER_SECTION + 4
 
     if mode == "acca":
         legs, used = [], set()
@@ -83,7 +91,7 @@ def render_report(picks, avoid, mode, date, notes=None):
             if len(legs) == 3:
                 break
         if not legs:
-            out.append("\nNo accumulator is strong enough today. Better to skip than force it.")
+            out.append(f"\nNo accumulator is strong enough {when}. Better to skip than force it.")
         else:
             out.append("\n" + LINE)
             for i, p in enumerate(legs, 1):
@@ -107,10 +115,10 @@ def render_report(picks, avoid, mode, date, notes=None):
                 continue
             items = [p for p in picks if p["category"] == key]
             items.sort(key=lambda p: (p["confidence"], p["probability"]), reverse=True)
-            items = items[:MAX_PER_SECTION]
+            items = items[:per_section]
             out.append(f"\n<b>{title}</b>  ({len(items)})\n{LINE}")
             if not items:
-                out.append("<i>No strong pick today.</i>")
+                out.append("<i>No strong pick " + when + ".</i>")
                 continue
             for i, p in enumerate(items, 1):
                 out.append(pick_block(i, p) + "\n")
@@ -120,7 +128,7 @@ def render_report(picks, avoid, mode, date, notes=None):
             for a in avoid[:4]:
                 out.append(f"• {esc(a['match'])}")
         if not shown:
-            out.append("\nNo pick passed the strength filter today. Try again closer to kick-off.")
+            out.append(f"\nNo pick passed the strength filter {when}. Try again closer to kick-off.")
 
     if notes:
         out.append("\nℹ️ " + esc(" ".join(notes)))

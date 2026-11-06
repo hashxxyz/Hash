@@ -44,6 +44,16 @@ def get_today_matches(date):
     return data.get("matches", [])
 
 
+def get_matches_range(date, days):
+    """Matches for Lagos dates `date` .. date+days-1 (one call). The window is padded by a day each side for the
+    UTC/Lagos offset, and capped so it stays inside Football-Data.org's 10-day limit."""
+    days = max(1, min(int(days), 7))
+    d0 = datetime.strptime(date, "%Y-%m-%d")
+    data = api_request("matches", {"dateFrom": (d0 - timedelta(days=1)).strftime("%Y-%m-%d"),
+                                   "dateTo": (d0 + timedelta(days=days)).strftime("%Y-%m-%d")})
+    return data.get("matches", [])
+
+
 def get_finished_matches(competition):
     """Finished matches of the current season of one competition (one call)."""
     data = api_request(f"competitions/{competition}/matches", {"status": "FINISHED"})

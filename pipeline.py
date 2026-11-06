@@ -8,8 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 import engine
 import store
 from agents import ask_json, scrub
-from basketball_data import get_today_games, get_odds as basketball_odds, get_team_statistics, get_games_on
-from football_data import get_today_matches, get_finished_matches, get_lagos_date, to_lagos_hhmm
+from basketball_data import (get_today_games, get_games_range, get_odds as basketball_odds,
+                             get_team_statistics, get_games_on)
+from football_data import get_today_matches, get_matches_range, get_finished_matches, get_lagos_date, to_lagos_hhmm
 from render import render_report, MODE_SECTIONS
 
 
@@ -51,6 +52,9 @@ BB_HISTORY_DAYS = _int_env("BB_HISTORY_DAYS", 14)                # recent-result
 PREDICTION_CACHE_SECONDS = _int_env("PREDICTION_CACHE_SECONDS", 6 * 3600)
 STATS_CACHE_SECONDS = _int_env("STATS_CACHE_SECONDS", 12 * 3600)
 TIME_BUDGET = _int_env("TIME_BUDGET", 55)
+WEEK_DAYS = 7                                                    # /week looks this many days ahead (Football-Data caps a range at 10 days)
+WEEK_MAX_FOOTBALL = _int_env("WEEK_MAX_FOOTBALL", 40)            # strongest football matches sent to the AI in /week
+WEEK_MAX_BASKETBALL = _int_env("WEEK_MAX_BASKETBALL", 20)
 
 # (league name, country), lower-case. Matching on the name alone also hit "Premier League" in Egypt, Russia, etc.
 PRIORITY_LEAGUES = {(n.lower(), c.lower()) for n, c in [
@@ -129,12 +133,29 @@ def football_summary(m, date):
             "home_id": (m.get("homeTeam") or {}).get("id"), "away_id": (m.get("awayTeam") or {}).get("id")}
 
 
-def _football_fixtures(date):
-    key = _cache_key(date, "fd", "fixtures")
+def _window(date, days):
+    d0 = datetime.strptime(date, "%Y-%m-%d").date()
+    return {(d0 + timedelta(days=i)).isoformat() for i in range(days)}
+
+
+def _when(day, hhmm, days):
+    """Kickoff label: just the time for a single day, 'Sat 10 Oct 20:00' when scanning several days."""
+    if days <= 1:
+        return hhmm
+    try:
+        return datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b") + f" {hhmm}"
+    except ValueError:
+        return hhmm
+
+
+def _football_fixtures(date, days=1):
+    key = _cache_key(date, "fd", "fixtures") if days <= 1 else _cache_key(date, "fd", "fixtures", f"{days}d")
     usable = store.get_json(key)
     if usable is None:
-        usable = [s for s in (football_summary(m, date) for m in get_today_matches(date))
-                  if s["day"] == date and s["status"] in {"SCHEDULED", "TIMED"}
+        window = _window(date, days)
+        matches = get_today_matches(date) if days <= 1 else get_matches_range(date, days)
+        usable = [s for s in (football_summary(m, date) for m in matches)
+                  if s["day"] in window and s["status"] in {"SCHEDULED", "TIMED"}
                   and s["home_id"] and s["away_id"] and s["id"]]
         store.set_json(key, usable, CACHE_SECONDS)
     return usable
@@ -156,12 +177,12 @@ def _competition_results(code):
     return hit
 
 
-def collect_football(date):
-    notes, usable = [], _football_fixtures(date)
+def collect_football(date, days=1):
+    notes, usable = [], _football_fixtures(date, days)
     counts = Counter(s["code"] for s in usable)
 
-    def rank(s):  # top competitions first, then the ones with the most matches today
-        return (-counts[s["code"]], s["code"] or "", s["kickoff"])
+    def rank(s):  # top competitions first, then the ones with the most matches in the window
+        return (-counts[s["code"]], s["code"] or "", s["day"], s["kickoff"])
 
     usable.sort(key=rank)
     codes = []
@@ -182,7 +203,7 @@ def collect_football(date):
         notes.append(f"Only the {FD_MAX_COMPETITIONS} busiest competitions were analysed today.")
 
     research = []
-    for s in usable[:MAX_FOOTBALL]:
+    for s in (usable if days > 1 else usable[:MAX_FOOTBALL]):
         games = results.get(s["code"])
         if not games:
             continue
@@ -194,9 +215,13 @@ def collect_football(date):
         if cands:
             research.append({"id": f"f{s['id']}", "sport": "football", "match": f"{s['home']} vs {s['away']}",
                              "league": f"{s['league']} ({s['country']})" if s["country"] else s["league"],
-                             "kickoff": s["kickoff"], "cands": cands,
+                             "kickoff": _when(s["day"], s["kickoff"], days), "cands": cands,
                              "ctx": {"exp_goals": model["exp"], "home_xg": model["lh"], "away_xg": model["la"],
                                      "games_used": model["n"]}})
+    if days > 1 and len(research) > WEEK_MAX_FOOTBALL:  # keep the strongest matches so the AI prompt stays small
+        research.sort(key=lambda r: max((c["n"], c["p"]) for c in r["cands"]), reverse=True)
+        research = research[:WEEK_MAX_FOOTBALL]
+        notes.append(f"Only the {WEEK_MAX_FOOTBALL} strongest football matches of the week were reviewed.")
     if usable and not results:
         notes.append("No competition results could be loaded, so no match could be modelled.")
     notes.append("Football picks come from a goals model on this season's results. No bookmaker odds are used.")
@@ -204,17 +229,18 @@ def collect_football(date):
 
 
 # ---------------------------------------------------------------- basketball collection
-def _basketball_games(date):
-    key = _cache_key(date, "bb", "games")
+def _basketball_games(date, days=1):
+    key = _cache_key(date, "bb", "games") if days <= 1 else _cache_key(date, "bb", "games", f"{days}d")
     usable = store.get_json(key)
     if usable is None:
         usable = []
-        for g in get_today_games():
+        for g in (get_today_games() if days <= 1 else get_games_range(date, days)):
             status, teams = g.get("status") or {}, g.get("teams") or {}
             home, away = teams.get("home") or {}, teams.get("away") or {}
             lg = g.get("league") or {}
             if g.get("id") and home.get("name") and away.get("name") and str(status.get("short") or "").upper() == "NS":
-                usable.append({"id": g["id"], "kickoff": (g.get("date") or "")[11:16], "home": home["name"],
+                usable.append({"id": g["id"], "day": (g.get("date") or "")[:10], "odds_item": g.get("odds_item"),
+                               "kickoff": (g.get("date") or "")[11:16], "home": home["name"],
                                "away": away["name"], "home_id": home.get("id"), "away_id": away.get("id"),
                                "league": lg.get("name"), "league_id": lg.get("id"), "season": lg.get("season"),
                                "country": (g.get("country") or {}).get("name")})
@@ -264,14 +290,19 @@ def _bb_history(date, budget):
     return games, budget, failed, last_err
 
 
-def collect_basketball(date):
+def collect_basketball(date, days=1):
     notes = []
-    usable = _basketball_games(date)
-    usable.sort(key=lambda s: ((s["league"] or "").lower() not in PRIORITY_BASKETBALL, s["kickoff"]))
-    usable = usable[:MAX_BASKETBALL]
+    usable = _basketball_games(date, days)
+    usable.sort(key=lambda s: ((s["league"] or "").lower() not in PRIORITY_BASKETBALL, s.get("day") or "", s["kickoff"]))
+    usable = usable[:MAX_BASKETBALL] if days <= 1 else usable[:WEEK_MAX_BASKETBALL]
 
     priced, odds_left, odds_failed, odds_err = [], BASKETBALL_ODDS_CALLS, 0, ""
     for s in usable:
+        if days > 1:  # the week feed already carries each game's odds: no extra call per game
+            odds = parse_basketball_odds([s["odds_item"]]) if s.get("odds_item") else {}
+            if odds and s["home_id"] and s["away_id"]:
+                priced.append((s, odds))
+            continue
         ok = _cache_key(date, "bb", "odds", s["id"])
         odds = store.get_json(ok)
         if odds is None:
@@ -335,12 +366,14 @@ def collect_basketball(date):
         cands = [c for c in cands if c["n"] >= MIN_CONFIDENCE]
         if cands:
             research.append({"id": f"b{s['id']}", "sport": "basketball", "match": f"{s['home']} vs {s['away']}",
-                             "league": s["league"], "kickoff": s["kickoff"], "cands": cands,
+                             "league": s["league"], "kickoff": _when(s.get("day"), s["kickoff"], days), "cands": cands,
                              "ctx": {"model_total": model["total"], "model_home": model["eh"],
                                      "model_away": model["ea"]}})
     if window:
         notes.append("Basketball form comes from the last "
                      f"{BB_HISTORY_DAYS} days of results, which fills in over the first few scans.")
+    if days > 1:
+        notes.append("Basketball games further ahead are skipped until the bookmaker lists a total line for them.")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
     if stats_failed:
@@ -418,14 +451,14 @@ def engine_picks(index):
     return picks
 
 
-def _analyse(scope, date):
+def _analyse(scope, date, days=1):
     deadline = time.time() + TIME_BUDGET
     jobs = {}
     with ThreadPoolExecutor(max_workers=2) as pool:
         if scope in {"both", "football"}:
-            jobs["football"] = pool.submit(collect_football, date)
+            jobs["football"] = pool.submit(collect_football, date, days)
         if scope in {"both", "basketball"}:
-            jobs["basketball"] = pool.submit(collect_basketball, date)
+            jobs["basketball"] = pool.submit(collect_basketball, date, days)
     data, notes, failed = [], [], 0
     for sport, job in jobs.items():
         try:
@@ -445,7 +478,7 @@ def _analyse(scope, date):
     index = {r["id"]: r for r in data}
     picks = avoid = None
     try:
-        picks, avoid = clean(ask_json(build_prompt(date, scope, data), ["gemini", "groq", "openrouter"],
+        picks, avoid = clean(ask_json(build_prompt(date, scope + (f", next {days} days" if days > 1 else ""), data), ["gemini", "groq", "openrouter"],
                                       deadline=deadline), index)
     except Exception as e:
         print("AI ERROR:", scrub(e))
@@ -469,39 +502,43 @@ def one_per_match(picks):
     return [p for _, p in best.values()]
 
 
-def _cached(scope, date):
+def _pipe_key(date, scope, days=1):
+    return _cache_key(date, "pipe", scope) if days <= 1 else _cache_key(date, "pipe", f"{days}d", scope)
+
+
+def _cached(scope, date, days=1):
     for s in ([scope, "both"] if scope != "both" else ["both"]):
-        hit = store.get_json(_cache_key(date, "pipe", s))
+        hit = store.get_json(_pipe_key(date, s, days))
         if hit:
             return hit
     return None
 
 
-def run_pipeline(mode="tips", only_basketball=False):
+def run_pipeline(mode="tips", days=1):
     date = get_lagos_date()
     scope = ("basketball" if mode in {"basketball", "bbover", "bbunder"}
              else "both" if mode in {"tips", "acca", "safe", "totals"} else "football")
-    if only_basketball:  # football paused: combined commands run basketball only
-        scope = "basketball"
     if not ENABLE_BASKETBALL:  # on by default; set ENABLE_BASKETBALL=false to turn it off
         if scope == "basketball":
             return "🏀 Basketball is switched off (ENABLE_BASKETBALL=false)."
         scope = "football"
-    hit = _cached(scope, date)
+    hit = _cached(scope, date, days)
     if hit:
         picks, avoid, notes = hit["picks"], hit["avoid"], hit["notes"]
     else:
-        picks, avoid, notes = _analyse(scope, date)
+        picks, avoid, notes = _analyse(scope, date, days)
         if picks is None:
-            return "⚠️ <b>AI BETTING GURU</b>\n\nNo usable fixtures were returned today.\n" + "\n".join(notes)
-        store.set_json(_cache_key(date, "pipe", scope), {"picks": picks, "avoid": avoid, "notes": notes}, CACHE_SECONDS)
+            return ("⚠️ <b>AI BETTING GURU</b>\n\nNo usable fixtures were returned for "
+                    + ("today" if days <= 1 else f"the next {days} days") + ".\n" + "\n".join(notes))
+        store.set_json(_pipe_key(date, scope, days), {"picks": picks, "avoid": avoid, "notes": notes},
+                       CACHE_SECONDS if days <= 1 else 3 * 3600)
 
     wanted = MODE_SECTIONS.get(mode, MODE_SECTIONS["tips"])
     picks = [p for p in picks if p["category"] in wanted]
     if mode == "safe":
         picks = [p for p in picks if p["risk"] == "Low" and p["confidence"] >= 7]
     picks = one_per_match(picks)  # a match appears once, with its strongest pick
-    return render_report(picks, avoid, mode, date, notes)
+    return render_report(picks, avoid, mode, date, notes, days)
 
 
 # ---------------------------------------------------------------- /longshot

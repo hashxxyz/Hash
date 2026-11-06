@@ -107,6 +107,35 @@ def get_today_games():
     return out
 
 
+def get_games_range(date, days):
+    """Upcoming games for Lagos dates `date` .. date+days-1, one feed call per league. Each game carries the odds
+    ESPN already lists for it (key "odds_item"), so no extra call is needed per game."""
+    days = max(1, min(int(days), 7))
+    d0 = datetime.strptime(date, "%Y-%m-%d")
+    days_set = {(d0 + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)}
+    start = (d0 - timedelta(days=1)).strftime("%Y%m%d")
+    end = (d0 + timedelta(days=days - 1)).strftime("%Y%m%d")
+    out = []
+    for league in _leagues():
+        try:
+            events = _scoreboard(league, start, end)
+        except requests.RequestException as e:
+            print("BASKETBALL FEED ERROR:", league, e)
+            continue
+        for e in events:
+            dt = _to_lagos(e.get("date"))
+            if not dt or dt.strftime("%Y-%m-%d") not in days_set or not e.get("id"):
+                continue
+            comp, home, away = _sides(e)
+            h, a = _team(home), _team(away)
+            out.append({"id": f"{league}:{e['id']}", "date": dt.isoformat(),
+                        "status": {"short": _status_short(e)}, "teams": {"home": h, "away": a},
+                        "league": {"name": LEAGUE_NAMES.get(league, league.upper()), "id": league,
+                                   "season": ((e.get("season") or {}).get("year"))},
+                        "country": {"name": "USA"}, "odds_item": _odds_item(e)})
+    return out
+
+
 # ---------------------------------------------------------------- odds
 def _american_to_decimal(v):
     try:

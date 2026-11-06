@@ -38,6 +38,9 @@ Runs serverlessly on **Vercel** (Python) and talks to Telegram through a webhook
 | `/btts` | Both teams to score |
 | `/safe` | Conservative picks only (low risk, confidence 7+) |
 | `/acca` | Best 3-leg accumulator (max 3 legs, one per match) |
+| `/week` | Next 7 days: football + basketball, same sections as `/tips` |
+| `/weekfootball` | Next 7 days, football only |
+| `/weekbasketball` | Next 7 days, basketball only |
 | `/help` | List of commands |
 
 Each pick shows the match, league, kickoff (Lagos time), selection, odds, probability, confidence out of 10, risk, and the model vs market probability.
