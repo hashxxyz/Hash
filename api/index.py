@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -22,6 +23,36 @@ MENU = ("/tips — everything (all sections)\n/totals — all over/under (footba
 START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
 HELP_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\n" + MENU + "\n\n⚠️ Probability-based analysis, not guaranteed results."
 FALLBACK_TEXT = "Use /tips to scan today's games.\n\n" + MENU
+
+
+# Analysis paused until this moment (Lagos time, UTC+1). Override with env PAUSE_UNTIL=YYYY-MM-DD, or "off".
+LAGOS = timezone(timedelta(hours=1))
+DEFAULT_PAUSE_UNTIL = datetime(2026, 11, 13, 18, 13, tzinfo=LAGOS)
+
+
+def pause_until():
+    raw = os.environ.get("PAUSE_UNTIL", "").strip().lower()
+    if raw in {"off", "0", "none"}:
+        return None
+    if raw:
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=LAGOS)
+        except ValueError:
+            pass
+    return DEFAULT_PAUSE_UNTIL
+
+
+def is_paused():
+    until = pause_until()
+    return bool(until) and datetime.now(LAGOS) < until
+
+
+BASKETBALL_MODES = {"basketball", "bbover", "bbunder"}
+COMBINED_MODES = {"tips", "acca", "safe", "totals"}
+
+
+def pause_text():
+    return "⏸️ Football analysis is paused until " + pause_until().strftime("%d %b %Y") + ". Basketball still works (/basketball, /bbover, /bbunder, /tips)."
 
 
 def scrub(text):
@@ -104,6 +135,8 @@ class handler(BaseHTTPRequestHandler):
             cmd = text.split()[0].split("@")[0].lower() if text else ""
             if cmd == "/start":
                 self.send_telegram(chat_id, START_TEXT)
+            elif (cmd == "/longshot" or (cmd in COMMANDS and cmd[1:] not in BASKETBALL_MODES | COMBINED_MODES)) and is_paused():
+                self.send_telegram(chat_id, pause_text())
             elif cmd == "/longshot":
                 try:
                     from pipeline import run_longshot
@@ -113,11 +146,11 @@ class handler(BaseHTTPRequestHandler):
                     self.send_telegram(chat_id, "❌ Longshot failed this time. Please try again in a minute.")
             elif cmd in COMMANDS:
                 mode = cmd[1:]
-                label = "football" if mode in {"tips", "acca"} and os.environ.get("ENABLE_BASKETBALL", "true").strip().lower() in {"0", "false", "no", "off"} else "football + basketball" if mode in {"tips", "acca"} else mode
+                label = "basketball" if is_paused() and mode in COMBINED_MODES else "football" if mode in {"tips", "acca"} and os.environ.get("ENABLE_BASKETBALL", "true").strip().lower() in {"0", "false", "no", "off"} else "football + basketball" if mode in {"tips", "acca"} else mode
                 self.send_telegram(chat_id, f"🧠 Scanning today's {label}...\n\nData → research → AI analysis → final picks")
                 try:
                     from pipeline import run_pipeline
-                    self.send_telegram(chat_id, run_pipeline(mode))
+                    self.send_telegram(chat_id, run_pipeline(mode, only_basketball=is_paused() and mode in COMBINED_MODES))
                 except Exception as e:
                     print("PIPELINE ERROR:", scrub(e))
                     self.send_telegram(chat_id, "❌ Analysis failed this time. Please try again in a minute.")
