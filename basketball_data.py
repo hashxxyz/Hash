@@ -107,6 +107,26 @@ def get_today_games():
     return out
 
 
+def get_finished_between(start_day, end_day):
+    """Finished games from Lagos date start_day to end_day inclusive, ONE feed call per league (not one per day)."""
+    d0, d1 = datetime.strptime(start_day, "%Y-%m-%d"), datetime.strptime(end_day, "%Y-%m-%d")
+    out = []
+    for league in _leagues():
+        events = _scoreboard(league, (d0 - timedelta(days=1)).strftime("%Y%m%d"), d1.strftime("%Y%m%d"))
+        for e in events:
+            if _status_short(e) not in {"FT", "AOT"}:
+                continue
+            comp, home, away = _sides(e)
+            try:
+                hs, aws = int(float(home.get("score"))), int(float(away.get("score")))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            h, a = _team(home), _team(away)
+            if h["id"] and a["id"]:
+                out.append({"h": h["id"], "a": a["id"], "hs": hs, "as": aws})
+    return out
+
+
 def get_games_range(date, days):
     """Upcoming games for Lagos dates `date` .. date+days-1, one feed call per league. Each game carries the odds
     ESPN already lists for it (key "odds_item"), so no extra call is needed per game."""

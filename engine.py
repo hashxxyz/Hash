@@ -280,6 +280,17 @@ def basketball_candidates(odds, model, home, away, min_odds=1.30, max_odds=3.0, 
     return _ranked(best)
 
 
+def basketball_candidates_model(model, home, away, min_p=0.56):
+    """No bookmaker line yet: only the winner can be priced (a total needs a line to compare with)."""
+    if not model:
+        return []
+    best = {}
+    pm_home = _norm_cdf((model["eh"] - model["ea"]) / model["sd_diff"])
+    for side, name, pm in (("home", home, pm_home), ("away", away, 1 - pm_home)):
+        _keep(best, _mk_model_only("BB_WINNER", f"BB_WINNER:{side}", f"{name} to win", pm, 0.30, min_p))
+    return _ranked(best)
+
+
 # ---------------------------------------------------------------- football model from results (no odds)
 def _team_rates(team_id, games, decay=0.93):
     """Recency-weighted goals scored / conceded per game for one team. Returns (gf, ga, n) or None."""

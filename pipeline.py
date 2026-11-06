@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import engine
 import store
 from agents import ask_json, scrub
-from basketball_data import (get_today_games, get_games_range, get_odds as basketball_odds,
+from basketball_data import (get_today_games, get_games_range, get_finished_between, get_odds as basketball_odds,
                              get_team_statistics, get_games_on)
 from football_data import get_today_matches, get_matches_range, get_finished_matches, get_lagos_date, to_lagos_hhmm
 from render import render_report, MODE_SECTIONS
@@ -265,10 +265,27 @@ def _bb_day_results(day):
     return out
 
 
+def _bb_history_range(date):
+    """The whole recent-results window in ONE call, cached 6 hours (works even when the cache is not persistent)."""
+    key = f"guru:bbhist:{date}"
+    hit = store.get_json(key)
+    if hit is None:
+        today = datetime.strptime(date, "%Y-%m-%d").date()
+        hit = get_finished_between((today - timedelta(days=BB_HISTORY_DAYS)).isoformat(),
+                                   (today - timedelta(days=1)).isoformat())
+        store.set_json(key, hit, 6 * 3600)
+    return hit
+
+
 def _bb_history(date, budget):
     """Finished games of the last BB_HISTORY_DAYS days. Each past day is cached for a week, so the window
     fills in over the first few scans (free-plan substitute for season statistics)."""
     games, failed, last_err = [], 0, ""
+    try:
+        return _bb_history_range(date), budget, 0, ""
+    except Exception as e:  # fall back to the slower day-by-day window
+        last_err = scrub(e)[:160]
+        print("BASKETBALL HISTORY RANGE ERROR:", last_err)
     today = datetime.strptime(date, "%Y-%m-%d").date()
     for d in range(1, BB_HISTORY_DAYS + 1):
         day = (today - timedelta(days=d)).isoformat()
@@ -300,8 +317,8 @@ def collect_basketball(date, days=1):
     for s in usable:
         if days > 1:  # the week feed already carries each game's odds: no extra call per game
             odds = parse_basketball_odds([s["odds_item"]]) if s.get("odds_item") else {}
-            if odds and s["home_id"] and s["away_id"]:
-                priced.append((s, odds))
+            if s["home_id"] and s["away_id"]:
+                priced.append((s, odds))  # odds may be empty: those games get a model-only winner pick
             continue
         ok = _cache_key(date, "bb", "odds", s["id"])
         odds = store.get_json(ok)
@@ -323,7 +340,7 @@ def collect_basketball(date, days=1):
     mode_key = _cache_key(date, "bb_stats_mode")
     window = store.get_json(mode_key) == "window"
     stats_left, stats_failed, stats_err, history = BASKETBALL_STATS_CALLS, 0, "", None
-    research = []
+    research, modelled = [], 0
     for s, odds in priced:
         profiles = {}
         if not window and s["league_id"] and s["season"]:
@@ -361,8 +378,12 @@ def collect_basketball(date, days=1):
         model = engine.basketball_model(profiles.get(s["home_id"]), profiles.get(s["away_id"]))
         if not model:
             continue
-        cands = engine.basketball_candidates(odds, model, s["home"], s["away"], MIN_ODDS, MAX_ODDS,
-                                             MIN_BB_PROB, BB_MIN_GAP)
+        modelled += 1
+        if odds:
+            cands = engine.basketball_candidates(odds, model, s["home"], s["away"], MIN_ODDS, MAX_ODDS,
+                                                 MIN_BB_PROB, BB_MIN_GAP)
+        else:
+            cands = engine.basketball_candidates_model(model, s["home"], s["away"], MIN_BB_PROB)
         cands = [c for c in cands if c["n"] >= MIN_CONFIDENCE]
         if cands:
             research.append({"id": f"b{s['id']}", "sport": "basketball", "match": f"{s['home']} vs {s['away']}",
@@ -371,9 +392,11 @@ def collect_basketball(date, days=1):
                                      "model_away": model["ea"]}})
     if window:
         notes.append("Basketball form comes from the last "
-                     f"{BB_HISTORY_DAYS} days of results, which fills in over the first few scans.")
+                     f"{BB_HISTORY_DAYS} days of results.")
     if days > 1:
-        notes.append("Basketball games further ahead are skipped until the bookmaker lists a total line for them.")
+        with_odds = sum(1 for _, o in priced if o)
+        notes.append(f"Basketball: {len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled. "
+                     "Games without odds only get a model-based winner pick; over/under appears once a total line is listed.")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
     if stats_failed:
