@@ -477,10 +477,12 @@ def _cached(scope, date):
     return None
 
 
-def run_pipeline(mode="tips"):
+def run_pipeline(mode="tips", only_basketball=False):
     date = get_lagos_date()
     scope = ("basketball" if mode in {"basketball", "bbover", "bbunder"}
              else "both" if mode in {"tips", "acca", "safe", "totals"} else "football")
+    if only_basketball:  # football paused: combined commands run basketball only
+        scope = "basketball"
     if not ENABLE_BASKETBALL:  # on by default; set ENABLE_BASKETBALL=false to turn it off
         if scope == "basketball":
             return "🏀 Basketball is switched off (ENABLE_BASKETBALL=false)."
