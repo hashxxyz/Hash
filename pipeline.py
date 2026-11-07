@@ -53,6 +53,7 @@ BB_HISTORY_DAYS = _int_env("BB_HISTORY_DAYS", 14)                # recent-result
 PREDICTION_CACHE_SECONDS = _int_env("PREDICTION_CACHE_SECONDS", 6 * 3600)
 STATS_CACHE_SECONDS = _int_env("STATS_CACHE_SECONDS", 12 * 3600)
 TIME_BUDGET = _int_env("TIME_BUDGET", 55)
+BUILD = "week-v6"                                                # shown in the /week basketball note: confirms which code Vercel is running
 WEEK_DAYS = 7                                                    # /week looks this many days ahead (Football-Data caps a range at 10 days)
 WEEK_MAX_FOOTBALL = _int_env("WEEK_MAX_FOOTBALL", 40)            # strongest football matches sent to the AI in /week
 WEEK_MAX_BASKETBALL = _int_env("WEEK_MAX_BASKETBALL", 20)
@@ -405,6 +406,8 @@ def _bb_history_range(date):
         today = datetime.strptime(date, "%Y-%m-%d").date()
         hit = get_finished_between((today - timedelta(days=BB_HISTORY_DAYS)).isoformat(),
                                    (today - timedelta(days=1)).isoformat())
+        if not hit:
+            raise RuntimeError("no finished games returned")
         store.set_json(key, hit, 6 * 3600)
     return hit
 
@@ -413,11 +416,12 @@ def _bb_history(date, budget):
     """Finished games of the last BB_HISTORY_DAYS days. Each past day is cached for a week, so the window
     fills in over the first few scans (free-plan substitute for season statistics)."""
     games, failed, last_err = [], 0, ""
+    range_err = ""
     try:
         return _bb_history_range(date), budget, 0, ""
     except Exception as e:  # fall back to the slower day-by-day window
-        last_err = scrub(e)[:160]
-        print("BASKETBALL HISTORY RANGE ERROR:", last_err)
+        range_err = "ESPN history: " + scrub(e)[:120]
+        print("BASKETBALL HISTORY RANGE ERROR:", range_err)
     today = datetime.strptime(date, "%Y-%m-%d").date()
     for d in range(1, BB_HISTORY_DAYS + 1):
         day = (today - timedelta(days=d)).isoformat()
@@ -436,6 +440,8 @@ def _bb_history(date, budget):
                 continue
             store.set_json(ck, hit, 7 * 24 * 3600)
         games.extend(hit)
+    if range_err:
+        last_err = f"{range_err} | {last_err}"
     return games, budget, failed, last_err
 
 
@@ -478,7 +484,7 @@ def collect_basketball(date, days=1):
     mode_key = _cache_key(date, "bb_stats_mode")
     window = store.get_json(mode_key) == "window"
     stats_left, stats_failed, stats_err, history = BASKETBALL_STATS_CALLS, 0, "", None
-    research, modelled = [], 0
+    research, modelled, hist_n, hist_err = [], 0, None, ""
     for s, odds in priced:
         profiles = {}
         if not window and s["league_id"] and s["season"]:
@@ -509,6 +515,7 @@ def collect_basketball(date, days=1):
         if window:
             if history is None:
                 history, stats_left, f, err = _bb_history(date, stats_left)
+                hist_n, hist_err = len(history), err
                 stats_failed += f
                 stats_err = err or stats_err
             if last_source()[0] == "apisports":  # history comes from ESPN: match the teams by name
@@ -538,9 +545,12 @@ def collect_basketball(date, days=1):
     if days > 1:
         with_odds = sum(1 for _, o in priced if o)
         src, src_err = last_source()
-        notes.append(f"Basketball ({src}{', fell back: ' + src_err if src == 'espn' and src_err else ''}): "
-                     f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled. "
+        notes.append(f"Basketball [{BUILD}] ({src}{', fell back: ' + src_err if src == 'espn' and src_err else ''}): "
+                     f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled"
+                     + (f", {hist_n} past games used for form" if hist_n is not None else "") + ". "
                      "Games without odds only get a model-based winner pick; over/under appears once a total line is listed.")
+    if hist_err:
+        notes.append(f"Form data problem: {hist_err}")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
     if stats_failed:
@@ -681,7 +691,7 @@ def _cached(scope, date, days=1):
     return None
 
 
-def run_pipeline(mode="tips", days=1):
+def run_pipeline(mode="tips", days=1, fresh=False):
     date = get_lagos_date()
     scope = ("basketball" if mode in {"basketball", "bbover", "bbunder"}
              else "both" if mode in {"tips", "acca", "safe", "totals"} else "football")
@@ -689,7 +699,7 @@ def run_pipeline(mode="tips", days=1):
         if scope == "basketball":
             return "🏀 Basketball is switched off (ENABLE_BASKETBALL=false)."
         scope = "football"
-    hit = _cached(scope, date, days)
+    hit = None if fresh else _cached(scope, date, days)
     if hit:
         picks, avoid, notes = hit["picks"], hit["avoid"], hit["notes"]
     else:
@@ -697,8 +707,9 @@ def run_pipeline(mode="tips", days=1):
         if picks is None:
             return ("⚠️ <b>AI BETTING GURU</b>\n\nNo usable fixtures were returned for "
                     + ("today" if days <= 1 else f"the next {days} days") + ".\n" + "\n".join(notes))
-        store.set_json(_pipe_key(date, scope, days), {"picks": picks, "avoid": avoid, "notes": notes},
-                       CACHE_SECONDS if days <= 1 else 3 * 3600)
+        if picks:  # never keep an empty result: it would repeat the same "no picks" message for hours
+            store.set_json(_pipe_key(date, scope, days), {"picks": picks, "avoid": avoid, "notes": notes},
+                           CACHE_SECONDS if days <= 1 else 3 * 3600)
 
     wanted = MODE_SECTIONS.get(mode, MODE_SECTIONS["tips"])
     picks = [p for p in picks if p["category"] in wanted]
