@@ -20,7 +20,7 @@ MENU = ("/tips — everything (all sections)\n/totals — all over/under (footba
         "/over — football over goals\n/under — football under goals\n/goals — football over + under\n"
         "/bbover — basketball over\n/bbunder — basketball under\n"
         "/1x2 — match result\n/dc — double chance\n/btts — both teams to score\n"
-        "/week — next 7 days, football + basketball\n/weekfootball — next 7 days, football only\n"
+        "/week — next 7 days, football + basketball (add \"fresh\" to skip saved results)\n/weekfootball — next 7 days, football only\n"
         "/weekbasketball — next 7 days, basketball only\n"
         "/safe — conservative picks\n/acca — best 3-leg accumulator\n/longshot — build a longshot slip from today's picks")
 START_TEXT = "⚽🏀 <b>AI BETTING GURU</b>\n\nI scan today's fixtures and send probability-based tips.\n\n" + MENU + "\n\n⚠️ No bet is guaranteed."
@@ -120,7 +120,8 @@ class handler(BaseHTTPRequestHandler):
                 self.send_telegram(chat_id, f"🧠 Scanning the next {WEEK_DAYS} days...\n\nData → research → AI analysis → final picks")
                 try:
                     from pipeline import run_pipeline
-                    self.send_telegram(chat_id, run_pipeline(mode, days=WEEK_DAYS))
+                    fresh = any(w in {"fresh", "refresh", "now"} for w in text.lower().split()[1:])
+                    self.send_telegram(chat_id, run_pipeline(mode, days=WEEK_DAYS, fresh=fresh))
                 except Exception as e:
                     print("WEEK PIPELINE ERROR:", scrub(e))
                     self.send_telegram(chat_id, "❌ Weekly analysis failed this time. Please try again in a minute.")
