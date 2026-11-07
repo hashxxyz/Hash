@@ -85,7 +85,7 @@ def _status_short(event):
     return "OTHER"
 
 
-def get_today_games():
+def _espn_today_games():
     day = get_lagos_date()
     out = []
     for league in _leagues():
@@ -107,7 +107,7 @@ def get_today_games():
     return out
 
 
-def get_finished_between(start_day, end_day):
+def _espn_finished_between(start_day, end_day):
     """Finished games from Lagos date start_day to end_day inclusive, ONE feed call per league (not one per day)."""
     d0, d1 = datetime.strptime(start_day, "%Y-%m-%d"), datetime.strptime(end_day, "%Y-%m-%d")
     out = []
@@ -127,7 +127,7 @@ def get_finished_between(start_day, end_day):
     return out
 
 
-def get_games_range(date, days):
+def _espn_games_range(date, days):
     """Upcoming games for Lagos dates `date` .. date+days-1, one feed call per league. Each game carries the odds
     ESPN already lists for it (key "odds_item"), so no extra call is needed per game."""
     days = max(1, min(int(days), 7))
@@ -205,7 +205,7 @@ def _odds_item(event):
     return None
 
 
-def get_odds(game_id):
+def _espn_odds(game_id):
     league, _, eid = str(game_id).partition(":")
     day = get_lagos_date()
     for e, _dt in _lagos_day_events(league, day):
@@ -216,12 +216,12 @@ def get_odds(game_id):
 
 
 # ---------------------------------------------------------------- form
-def get_team_statistics(league_id, season, team_id):
+def _espn_team_statistics(league_id, season, team_id):
     # No season-statistics endpoint here: the pipeline falls back to recent results when it sees this error.
     raise RuntimeError("plan: season statistics are not available from this data source")
 
 
-def get_games_on(day):
+def _espn_games_on(day):
     """Finished games on one Lagos date, shaped like the old API-Sports 'games' response."""
     out = []
     for league in _leagues():
@@ -237,3 +237,107 @@ def get_games_on(day):
             out.append({"status": {"short": short}, "teams": {"home": _team(home), "away": _team(away)},
                         "scores": {"home": {"total": hs}, "away": {"total": aws}}})
     return out
+
+
+# ================================================================ API-Sports (used first when a key is set)
+# Same key as the old setup. Env var names tried, in order: API_SPORTS_KEY, APISPORTS_KEY, API_BASKETBALL_KEY, API_FOOTBALL_KEY.
+# Free plans only see yesterday/today/tomorrow and no season statistics: errors fall back to ESPN automatically.
+APS_URL = "https://v1.basketball.api-sports.io"
+_STATE = {"source": "espn", "error": ""}
+
+
+def _aps_key():
+    for name in ("API_SPORTS_KEY", "APISPORTS_KEY", "API_BASKETBALL_KEY", "API_FOOTBALL_KEY"):
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    return ""
+
+
+def last_source():
+    """('apisports' | 'espn', last API-Sports error text) for the diagnostic note."""
+    return _STATE["source"], _STATE["error"]
+
+
+def _aps(endpoint, params):
+    r = requests.get(f"{APS_URL}/{endpoint}", headers={"x-apisports-key": _aps_key()}, params=params, timeout=25)
+    r.raise_for_status()
+    data = r.json()
+    errs = data.get("errors")
+    if errs:
+        msg = "; ".join(str(v) for v in (errs.values() if isinstance(errs, dict) else errs))
+        raise RuntimeError(msg[:200])
+    return data.get("response") or []
+
+
+def _aps_games_on(day):
+    return _aps("games", {"date": day, "timezone": "Africa/Lagos"})
+
+
+def _aps_games(date, days):
+    d0 = datetime.strptime(date, "%Y-%m-%d")
+    out, last_err, ok = [], "", 0
+    for i in range(max(1, min(int(days), 7))):
+        day = (d0 + timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            out.extend(_aps_games_on(day))
+            ok += 1
+        except Exception as e:  # e.g. free plan: day outside the allowed window
+            last_err = str(e)[:160]
+            print("API-SPORTS BASKETBALL GAMES ERROR:", day, last_err)
+    if not ok:
+        raise RuntimeError(last_err or "no API-Sports response")
+    return out
+
+
+def _use_aps_first(fetch):
+    if _aps_key():
+        try:
+            games = fetch()
+            if games:
+                _STATE.update(source="apisports", error="")
+                return games
+            _STATE["error"] = "API-Sports returned no games"
+        except Exception as e:
+            _STATE["error"] = str(e)[:160]
+            print("API-SPORTS BASKETBALL FALLBACK:", _STATE["error"])
+    _STATE["source"] = "espn"
+    return None
+
+
+def get_today_games():
+    games = _use_aps_first(lambda: _aps_games(get_lagos_date(), 1))
+    return games if games is not None else _espn_today_games()
+
+
+def get_games_range(date, days):
+    games = _use_aps_first(lambda: _aps_games(date, days))
+    return games if games is not None else _espn_games_range(date, days)
+
+
+def _is_espn_id(game_id):
+    return ":" in str(game_id)
+
+
+def get_odds(game_id):
+    if _is_espn_id(game_id):
+        return _espn_odds(game_id)
+    return _aps("odds", {"game": game_id})
+
+
+def get_team_statistics(league_id, season, team_id):
+    if _STATE["source"] == "apisports":
+        return _aps("statistics", {"league": league_id, "season": season, "team": team_id})
+    return _espn_team_statistics(league_id, season, team_id)
+
+
+def get_games_on(day):
+    if _STATE["source"] == "apisports":
+        return _aps_games_on(day)
+    return _espn_games_on(day)
+
+
+def get_finished_between(start_day, end_day):
+    if _STATE["source"] == "apisports":  # one call per day on API-Sports: let the pipeline use its budgeted day-by-day path
+        raise RuntimeError("API-Sports history is read day by day")
+    return _espn_finished_between(start_day, end_day)

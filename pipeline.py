@@ -8,9 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 import engine
 import store
 from agents import ask_json, scrub
-from basketball_data import (get_today_games, get_games_range, get_finished_between, get_odds as basketball_odds,
+from basketball_data import (get_today_games, get_games_range, get_finished_between, last_source, get_odds as basketball_odds,
                              get_team_statistics, get_games_on)
-from football_data import get_today_matches, get_matches_range, get_finished_matches, get_lagos_date, to_lagos_hhmm
+from football_data import (get_today_matches, get_matches_range, get_finished_matches, get_lagos_date,
+                           to_lagos_hhmm, aps_key, aps_fixtures, aps_prediction, aps_odds)
 from render import render_report, MODE_SECTIONS
 
 
@@ -228,6 +229,137 @@ def collect_football(date, days=1):
     return research, notes
 
 
+# ---------------------------------------------------------------- football via API-Football (API-Sports), in addition
+def parse_football_odds(items):
+    names = {"match winner": "1X2", "goals over/under": "Goals O/U", "both teams score": "BTTS", "double chance": "Double Chance"}
+    out = {}
+    for item in items or []:
+        for bm in item.get("bookmakers") or []:
+            for bet in bm.get("bets") or []:
+                key = names.get(str(bet.get("name") or "").lower())
+                if not key or key in out:
+                    continue
+                values = {}
+                for v in bet.get("values") or []:
+                    try:
+                        values[str(v.get("value"))] = float(v.get("odd"))
+                    except (TypeError, ValueError):
+                        continue
+                if key == "Goals O/U":
+                    values = _trim_totals(values)
+                if values:
+                    out[key] = values
+    return out
+
+
+_SKIP_WORDS = {"fc", "cf", "ac", "as", "sc", "afc", "us", "ss", "sv", "fk", "club", "de", "the", "calcio", "and", "e"}
+
+
+def _team_key(name):
+    """Longest meaningful word of a team name, to match the same club across two data sources."""
+    words = [w for w in "".join(ch if ch.isalpha() else " " for ch in str(name or "").lower()).split() if w not in _SKIP_WORDS]
+    return max(words, key=len) if words else ""
+
+
+def _match_key(day, home, away):
+    return (day, _team_key(home), _team_key(away))
+
+
+def collect_football_aps(date, days=1, skip=frozenset()):
+    """Football-Data.org covers 12 competitions; this adds every other league the API-Sports key can see.
+    Matches already handled by the other source (same day + clubs) are skipped."""
+    notes = []
+    key = _cache_key(date, "aps", "fixtures", f"{days}d")
+    fixtures = store.get_json(key)
+    if fixtures is None:
+        window, fixtures = _window(date, days), []
+        for f in aps_fixtures(date, days):
+            fx, lg, tm = f.get("fixture") or {}, f.get("league") or {}, f.get("teams") or {}
+            day, hhmm = (fx.get("date") or "")[:10], (fx.get("date") or "")[11:16]
+            if day in window and str((fx.get("status") or {}).get("short") or "").upper() == "NS" and fx.get("id"):
+                fixtures.append({"id": fx["id"], "day": day, "kickoff": hhmm, "league": lg.get("name"), "country": lg.get("country"),
+                                 "home": (tm.get("home") or {}).get("name"), "away": (tm.get("away") or {}).get("name")})
+        store.set_json(key, fixtures, CACHE_SECONDS)
+    fixtures = [f for f in fixtures if f["home"] and f["away"] and _match_key(f["day"], f["home"], f["away"]) not in skip]
+    fixtures.sort(key=lambda f: ((str(f["league"]).lower(), str(f["country"]).lower()) not in PRIORITY_LEAGUES, f["day"], f["kickoff"]))
+
+    pred_left, odds_left, failed, last_err, research = FOOTBALL_PREDICTION_CALLS, FOOTBALL_ODDS_CALLS, 0, "", []
+    for f in fixtures:
+        pk = _cache_key(date, "aps", "pred", f["id"])
+        pred = store.get_json(pk)
+        if pred is None:
+            if pred_left <= 0:
+                continue
+            pred_left -= 1
+            try:
+                pred = aps_prediction(f["id"]) or []
+            except Exception as e:
+                failed += 1
+                last_err = scrub(e)[:160]
+                print("API-FOOTBALL PREDICTION ERROR:", last_err)
+                continue
+            store.set_json(pk, pred, PREDICTION_CACHE_SECONDS)
+        model = engine.football_model(pred)
+        if not model:
+            continue
+        ok = _cache_key(date, "aps", "odds", f["id"])
+        odds = store.get_json(ok)
+        if odds is None and odds_left > 0:
+            odds_left -= 1
+            try:
+                odds = parse_football_odds(aps_odds(f["id"]))
+                store.set_json(ok, odds, ODDS_CACHE_SECONDS)
+            except Exception as e:
+                last_err = scrub(e)[:160]
+                print("API-FOOTBALL ODDS ERROR:", last_err)
+        if odds:
+            cands = engine.football_candidates(odds, model, f["home"], f["away"], MIN_ODDS, MAX_ODDS, MIN_PROB)
+        else:
+            cands = engine.football_candidates_model(model, f["home"], f["away"], MIN_PROB)
+        cands = [c for c in cands if c["n"] >= MIN_CONFIDENCE]
+        if cands:
+            research.append({"id": f"a{f['id']}", "sport": "football", "match": f"{f['home']} vs {f['away']}",
+                             "league": f"{f['league']} ({f['country']})" if f["country"] else f["league"],
+                             "kickoff": _when(f["day"], f["kickoff"], days), "cands": cands,
+                             "ctx": {"exp_goals": model["exp"], "home_xg": model["lh"], "away_xg": model["la"],
+                                     "h2h_avg": model["h2h_avg"]}})
+    if failed:
+        notes.append(f"API-Football data failed for {failed} match(es): {last_err}")
+    notes.append(f"API-Football added {len(research)} extra match(es) from other leagues"
+                 " (each scan covers a few more, results are cached).")
+    return research, notes
+
+
+def collect_football_all(date, days=1):
+    """Football-Data.org first; API-Football (same key as basketball) adds the leagues it does not cover."""
+    research, notes, errors = [], [], []
+    try:
+        research, notes = collect_football(date, days)
+    except Exception as e:
+        errors.append(scrub(e)[:160])
+        print("FOOTBALL-DATA ERROR:", errors[-1])
+    if aps_key():
+        try:
+            try:
+                skip = {_match_key(s["day"], s["home"], s["away"]) for s in _football_fixtures(date, days)}
+            except Exception:
+                skip = set()
+            extra, n = collect_football_aps(date, days, skip)
+            research = research + extra
+            notes = notes + n
+        except Exception as e:
+            errors.append(scrub(e)[:160])
+            print("API-FOOTBALL ERROR:", errors[-1])
+    if errors and not research and len(errors) >= (2 if aps_key() else 1):
+        raise RuntimeError("; ".join(errors))
+    if errors:
+        notes.append("Some football data failed: " + "; ".join(errors))
+    if days > 1 and len(research) > WEEK_MAX_FOOTBALL:
+        research.sort(key=lambda r: max((c["n"], c["p"]) for c in r["cands"]), reverse=True)
+        research = research[:WEEK_MAX_FOOTBALL]
+    return research, notes
+
+
 # ---------------------------------------------------------------- basketball collection
 def _basketball_games(date, days=1):
     key = _cache_key(date, "bb", "games") if days <= 1 else _cache_key(date, "bb", "games", f"{days}d")
@@ -315,13 +447,17 @@ def collect_basketball(date, days=1):
 
     priced, odds_left, odds_failed, odds_err = [], BASKETBALL_ODDS_CALLS, 0, ""
     for s in usable:
-        if days > 1:  # the week feed already carries each game's odds: no extra call per game
+        if days > 1 and ":" in str(s["id"]):  # ESPN week feed already carries each game's odds: no extra call per game
             odds = parse_basketball_odds([s["odds_item"]]) if s.get("odds_item") else {}
             if s["home_id"] and s["away_id"]:
                 priced.append((s, odds))  # odds may be empty: those games get a model-only winner pick
             continue
         ok = _cache_key(date, "bb", "odds", s["id"])
         odds = store.get_json(ok)
+        if odds is None and days > 1 and odds_left <= 0:  # week: out of odds calls, keep the game for a model-only pick
+            if s["home_id"] and s["away_id"]:
+                priced.append((s, {}))
+            continue
         if odds is None:
             if odds_left <= 0:
                 continue
@@ -332,10 +468,12 @@ def collect_basketball(date, days=1):
                 odds_failed += 1
                 odds_err = scrub(e)[:160]
                 print("BASKETBALL ODDS ERROR:", odds_err)
+                if days > 1 and s["home_id"] and s["away_id"]:
+                    priced.append((s, {}))
                 continue
             store.set_json(ok, odds, ODDS_CACHE_SECONDS)
-        if odds and s["home_id"] and s["away_id"]:
-            priced.append((s, odds))
+        if (odds or days > 1) and s["home_id"] and s["away_id"]:
+            priced.append((s, odds or {}))
 
     mode_key = _cache_key(date, "bb_stats_mode")
     window = store.get_json(mode_key) == "window"
@@ -395,7 +533,9 @@ def collect_basketball(date, days=1):
                      f"{BB_HISTORY_DAYS} days of results.")
     if days > 1:
         with_odds = sum(1 for _, o in priced if o)
-        notes.append(f"Basketball: {len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled. "
+        src, src_err = last_source()
+        notes.append(f"Basketball ({src}{', fell back: ' + src_err if src == 'espn' and src_err else ''}): "
+                     f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled. "
                      "Games without odds only get a model-based winner pick; over/under appears once a total line is listed.")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")
@@ -479,7 +619,7 @@ def _analyse(scope, date, days=1):
     jobs = {}
     with ThreadPoolExecutor(max_workers=2) as pool:
         if scope in {"both", "football"}:
-            jobs["football"] = pool.submit(collect_football, date, days)
+            jobs["football"] = pool.submit(collect_football_all, date, days)
         if scope in {"both", "basketball"}:
             jobs["basketball"] = pool.submit(collect_basketball, date, days)
     data, notes, failed = [], [], 0
