@@ -322,7 +322,7 @@ def last_source():
 
 def _aps(endpoint, params):
     import apisports
-    apisports.acquire()
+    apisports.acquire(max_wait=5)
     r = requests.get(f"{APS_URL}/{endpoint}", headers={"x-apisports-key": _aps_key()}, params=params, timeout=25)
     r.raise_for_status()
     data = r.json()

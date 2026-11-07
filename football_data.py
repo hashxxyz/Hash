@@ -76,8 +76,8 @@ def aps_key():
 
 def _aps(endpoint, params):
     import apisports
-    apisports.acquire()
-    r = requests.get(f"{APS_URL}/{endpoint}", headers={"x-apisports-key": aps_key()}, params=params, timeout=25)
+    apisports.acquire(max_wait=3)  # football extras must never slow the main football scan
+    r = requests.get(f"{APS_URL}/{endpoint}", headers={"x-apisports-key": aps_key()}, params=params, timeout=8)
     r.raise_for_status()
     data = r.json()
     errs = data.get("errors")

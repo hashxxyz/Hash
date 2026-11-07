@@ -54,6 +54,9 @@ PREDICTION_CACHE_SECONDS = _int_env("PREDICTION_CACHE_SECONDS", 6 * 3600)
 STATS_CACHE_SECONDS = _int_env("STATS_CACHE_SECONDS", 12 * 3600)
 TIME_BUDGET = _int_env("TIME_BUDGET", 55)
 BUILD = "v7"                                                # shown in the /week basketball note: confirms which code Vercel is running
+FOOTBALL_APS = os.environ.get("FOOTBALL_API_SPORTS", "on").strip().lower() not in {"0", "false", "no", "off"}  # off = Football-Data.org only
+APS_FOOTBALL_SECONDS = _int_env("APS_FOOTBALL_SECONDS", 15)       # time box for the API-Football extras
+APS_FOOTBALL_DAYS = _int_env("APS_FOOTBALL_DAYS", 3)              # days ahead API-Football looks at (saves its 10 calls/minute)
 WEEK_DAYS = 7                                                    # /week looks this many days ahead (Football-Data caps a range at 10 days)
 WEEK_MAX_FOOTBALL = _int_env("WEEK_MAX_FOOTBALL", 40)            # strongest football matches sent to the AI in /week
 WEEK_MAX_BASKETBALL = _int_env("WEEK_MAX_BASKETBALL", 20)
@@ -269,7 +272,8 @@ def _match_key(day, home, away):
 def collect_football_aps(date, days=1, skip=frozenset()):
     """Football-Data.org covers 12 competitions; this adds every other league the API-Sports key can see.
     Matches already handled by the other source (same day + clubs) are skipped."""
-    notes = []
+    notes, t0 = [], time.time()
+    days = min(days, APS_FOOTBALL_DAYS)
     key = _cache_key(date, "aps", "fixtures", f"{days}d")
     fixtures = store.get_json(key)
     if fixtures is None:
@@ -286,6 +290,9 @@ def collect_football_aps(date, days=1, skip=frozenset()):
 
     pred_left, odds_left, failed, last_err, research = FOOTBALL_PREDICTION_CALLS, FOOTBALL_ODDS_CALLS, 0, "", []
     for f in fixtures:
+        if time.time() - t0 > APS_FOOTBALL_SECONDS:  # time box: the extras stop here, the rest waits for the next scan
+            notes.append("API-Football extras stopped early (time box); the next scan covers more.")
+            break
         pk = _cache_key(date, "aps", "pred", f["id"])
         pred = store.get_json(pk)
         if pred is None:
@@ -339,7 +346,7 @@ def collect_football_all(date, days=1):
     except Exception as e:
         errors.append(scrub(e)[:160])
         print("FOOTBALL-DATA ERROR:", errors[-1])
-    if aps_key():
+    if aps_key() and FOOTBALL_APS:
         try:
             try:
                 skip = {_match_key(s["day"], s["home"], s["away"]) for s in _football_fixtures(date, days)}
@@ -351,7 +358,7 @@ def collect_football_all(date, days=1):
         except Exception as e:
             errors.append(scrub(e)[:160])
             print("API-FOOTBALL ERROR:", errors[-1])
-    if errors and not research and len(errors) >= (2 if aps_key() else 1):
+    if errors and not research and len(errors) >= (2 if aps_key() and FOOTBALL_APS else 1):
         raise RuntimeError("; ".join(errors))
     if errors:
         notes.append("Some football data failed: " + "; ".join(errors))
