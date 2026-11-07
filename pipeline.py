@@ -53,7 +53,7 @@ BB_HISTORY_DAYS = _int_env("BB_HISTORY_DAYS", 14)                # recent-result
 PREDICTION_CACHE_SECONDS = _int_env("PREDICTION_CACHE_SECONDS", 6 * 3600)
 STATS_CACHE_SECONDS = _int_env("STATS_CACHE_SECONDS", 12 * 3600)
 TIME_BUDGET = _int_env("TIME_BUDGET", 55)
-BUILD = "week-v6"                                                # shown in the /week basketball note: confirms which code Vercel is running
+BUILD = "v7"                                                # shown in the /week basketball note: confirms which code Vercel is running
 WEEK_DAYS = 7                                                    # /week looks this many days ahead (Football-Data caps a range at 10 days)
 WEEK_MAX_FOOTBALL = _int_env("WEEK_MAX_FOOTBALL", 40)            # strongest football matches sent to the AI in /week
 WEEK_MAX_BASKETBALL = _int_env("WEEK_MAX_BASKETBALL", 20)
@@ -512,7 +512,7 @@ def collect_basketball(date, days=1):
                         break
                     store.set_json(f"guru:bbstats:{s['league_id']}:{s['season']}:{tid}", p, STATS_CACHE_SECONDS)
                     profiles[tid] = p
-        if window:
+        if window or not (s["league_id"] and s["season"]):  # no season statistics available: use recent results
             if history is None:
                 history, stats_left, f, err = _bb_history(date, stats_left)
                 hist_n, hist_err = len(history), err
@@ -542,13 +542,13 @@ def collect_basketball(date, days=1):
     if window:
         notes.append("Basketball form comes from the last "
                      f"{BB_HISTORY_DAYS} days of results.")
-    if days > 1:
-        with_odds = sum(1 for _, o in priced if o)
-        src, src_err = last_source()
-        notes.append(f"Basketball [{BUILD}] ({src}{', fell back: ' + src_err if src == 'espn' and src_err else ''}): "
-                     f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled"
-                     + (f", {hist_n} past games used for form" if hist_n is not None else "") + ". "
-                     "Games without odds only get a model-based winner pick; over/under appears once a total line is listed.")
+    with_odds = sum(1 for _, o in priced if o)
+    src, src_err = last_source()
+    notes.append(f"Basketball [{BUILD}] ({src}{', ' + src_err if src_err else ''}): "
+                 f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled"
+                 + (f", {hist_n} past games used for form" if hist_n is not None else "") + ". "
+                 + ("Games without odds only get a model-based winner pick; over/under appears once a total line is listed."
+                    if days > 1 else ""))
     if hist_err and not stats_failed:
         notes.append(f"Form data problem: {hist_err}")
     if odds_failed:

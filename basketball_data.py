@@ -44,10 +44,29 @@ def _scoreboard_span(league, start, end, step=2):
         cur = last + timedelta(days=1)
 
     def one(c):
+        errs = []
         try:
             return _scoreboard(league, c[0], c[1]), None
         except Exception as e:
-            return [], str(e)[:120]
+            errs.append(str(e)[:90])
+        try:  # retry without the limit parameter, then one day at a time
+            r = requests.get(f"{BASE_URL}/{league}/scoreboard",
+                             params={"dates": c[0] if c[0] == c[1] else f"{c[0]}-{c[1]}"}, timeout=20)
+            r.raise_for_status()
+            return r.json().get("events") or [], None
+        except Exception as e:
+            errs.append(str(e)[:90])
+        try:
+            d, last, ev = datetime.strptime(c[0], "%Y%m%d"), datetime.strptime(c[1], "%Y%m%d"), []
+            while d <= last:
+                r = requests.get(f"{BASE_URL}/{league}/scoreboard", params={"dates": d.strftime("%Y%m%d")}, timeout=20)
+                r.raise_for_status()
+                ev.extend(r.json().get("events") or [])
+                d += timedelta(days=1)
+            return ev, None
+        except Exception as e:
+            errs.append(str(e)[:90])
+        return [], " / ".join(errs)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(one, chunks))
     if results and all(err for _, err in results):
@@ -119,7 +138,7 @@ def _espn_today_games():
     for league in _leagues():
         try:
             events = _lagos_day_events(league, day)
-        except requests.RequestException as e:
+        except Exception as e:
             print("BASKETBALL FEED ERROR:", league, e)
             continue
         for e, dt in events:
@@ -143,9 +162,14 @@ def norm_team(name):
 def _espn_finished_between(start_day, end_day, by_name=False):
     """Finished games from Lagos date start_day to end_day inclusive, ONE feed call per league (not one per day)."""
     d0, d1 = datetime.strptime(start_day, "%Y-%m-%d"), datetime.strptime(end_day, "%Y-%m-%d")
-    out = []
+    out, errors, ok = [], [], 0
     for league in _leagues():
-        events = _scoreboard_span(league, d0.date(), d1.date())
+        try:
+            events = _scoreboard_span(league, d0.date(), d1.date())
+            ok += 1
+        except Exception as e:  # one league failing (e.g. out of season) must not lose the others
+            errors.append(f"{league}: {str(e)[:150]}")
+            continue
         for e in events:
             if _status_short(e) not in {"FT", "AOT"}:
                 continue
@@ -159,6 +183,8 @@ def _espn_finished_between(start_day, end_day, by_name=False):
                 out.append({"h": norm_team(h["name"]), "a": norm_team(a["name"]), "hs": hs, "as": aws})
             elif h["id"] and a["id"]:
                 out.append({"h": h["id"], "a": a["id"], "hs": hs, "as": aws})
+    if not ok:
+        raise RuntimeError("; ".join(errors))
     return out
 
 
@@ -295,6 +321,8 @@ def last_source():
 
 
 def _aps(endpoint, params):
+    import apisports
+    apisports.acquire()
     r = requests.get(f"{APS_URL}/{endpoint}", headers={"x-apisports-key": _aps_key()}, params=params, timeout=25)
     r.raise_for_status()
     data = r.json()
@@ -325,29 +353,35 @@ def _aps_games(date, days):
     return out
 
 
-def _use_aps_first(fetch):
-    if _aps_key():
+def _games(espn_fn, aps_fn):
+    """BB_SOURCE=auto (default): ESPN first (no key, no rate limit, has the past results team form needs), API-Sports
+    when ESPN returns nothing. BB_SOURCE=apisports: API-Sports first. BB_SOURCE=espn: ESPN only."""
+    pref = os.environ.get("BB_SOURCE", "auto").strip().lower()
+    order = ["apisports", "espn"] if pref == "apisports" else ["espn"] if pref == "espn" else ["espn", "apisports"]
+    errors = []
+    for src in order:
+        if src == "apisports" and not _aps_key():
+            continue
         try:
-            games = fetch()
-            if games:
-                _STATE.update(source="apisports", error="")
-                return games
-            _STATE["error"] = "API-Sports returned no games"
+            games = aps_fn() if src == "apisports" else espn_fn()
         except Exception as e:
-            _STATE["error"] = str(e)[:160]
-            print("API-SPORTS BASKETBALL FALLBACK:", _STATE["error"])
-    _STATE["source"] = "espn"
-    return None
+            errors.append(f"{src}: {str(e)[:100]}")
+            print("BASKETBALL SOURCE ERROR:", errors[-1])
+            continue
+        if games:
+            _STATE.update(source=src, error=" | ".join(errors))
+            return games
+        errors.append(f"{src}: no games")
+    _STATE.update(source="espn", error=" | ".join(errors))
+    return []
 
 
 def get_today_games():
-    games = _use_aps_first(lambda: _aps_games(get_lagos_date(), 1))
-    return games if games is not None else _espn_today_games()
+    return _games(_espn_today_games, lambda: _aps_games(get_lagos_date(), 1))
 
 
 def get_games_range(date, days):
-    games = _use_aps_first(lambda: _aps_games(date, days))
-    return games if games is not None else _espn_games_range(date, days)
+    return _games(lambda: _espn_games_range(date, days), lambda: _aps_games(date, days))
 
 
 def _is_espn_id(game_id):
