@@ -549,7 +549,7 @@ def collect_basketball(date, days=1):
                      f"{len(usable)} games found, {with_odds} with bookmaker odds, {modelled} modelled"
                      + (f", {hist_n} past games used for form" if hist_n is not None else "") + ". "
                      "Games without odds only get a model-based winner pick; over/under appears once a total line is listed.")
-    if hist_err:
+    if hist_err and not stats_failed:
         notes.append(f"Form data problem: {hist_err}")
     if odds_failed:
         notes.append(f"Basketball odds failed for {odds_failed} game(s): {odds_err}")

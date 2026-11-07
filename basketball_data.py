@@ -5,6 +5,7 @@ so pipeline.py and engine.py do not need to change. Leagues come from BB_LEAGUES
 Odds are whatever ESPN lists for the game (total line, moneyline); when a price is not listed, -110 is assumed.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import requests
@@ -31,6 +32,33 @@ def _scoreboard(league, start, end):
     r = requests.get(f"{BASE_URL}/{league}/scoreboard", params={"dates": dates, "limit": 300}, timeout=20)
     r.raise_for_status()
     return r.json().get("events") or []
+
+
+def _scoreboard_span(league, start, end, step=2):
+    """Events for the dates start..end (date objects). ESPN answers 400 to long ranges, so the span is read in
+    2-day chunks (the size the daily scan already uses), in parallel, and a failed chunk does not lose the rest."""
+    chunks, cur = [], start
+    while cur <= end:
+        last = min(cur + timedelta(days=step - 1), end)
+        chunks.append((cur.strftime("%Y%m%d"), last.strftime("%Y%m%d")))
+        cur = last + timedelta(days=1)
+
+    def one(c):
+        try:
+            return _scoreboard(league, c[0], c[1]), None
+        except Exception as e:
+            return [], str(e)[:120]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(one, chunks))
+    if results and all(err for _, err in results):
+        raise RuntimeError(results[0][1])
+    seen, out = set(), []
+    for events, _ in results:
+        for e in events:
+            if e.get("id") not in seen:
+                seen.add(e.get("id"))
+                out.append(e)
+    return out
 
 
 def _lagos_day_events(league, day):
@@ -117,7 +145,7 @@ def _espn_finished_between(start_day, end_day, by_name=False):
     d0, d1 = datetime.strptime(start_day, "%Y-%m-%d"), datetime.strptime(end_day, "%Y-%m-%d")
     out = []
     for league in _leagues():
-        events = _scoreboard(league, (d0 - timedelta(days=1)).strftime("%Y%m%d"), d1.strftime("%Y%m%d"))
+        events = _scoreboard_span(league, d0.date(), d1.date())
         for e in events:
             if _status_short(e) not in {"FT", "AOT"}:
                 continue
@@ -140,13 +168,13 @@ def _espn_games_range(date, days):
     days = max(1, min(int(days), 7))
     d0 = datetime.strptime(date, "%Y-%m-%d")
     days_set = {(d0 + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)}
-    start = (d0 - timedelta(days=1)).strftime("%Y%m%d")
-    end = (d0 + timedelta(days=days - 1)).strftime("%Y%m%d")
+    start = (d0 - timedelta(days=1)).date()
+    end = (d0 + timedelta(days=days - 1)).date()
     out = []
     for league in _leagues():
         try:
-            events = _scoreboard(league, start, end)
-        except requests.RequestException as e:
+            events = _scoreboard_span(league, start, end)
+        except Exception as e:
             print("BASKETBALL FEED ERROR:", league, e)
             continue
         for e in events:
