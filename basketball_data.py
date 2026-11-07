@@ -107,7 +107,12 @@ def _espn_today_games():
     return out
 
 
-def _espn_finished_between(start_day, end_day):
+def norm_team(name):
+    """Team name reduced to lower-case letters/digits, to match the same club across two data sources."""
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _espn_finished_between(start_day, end_day, by_name=False):
     """Finished games from Lagos date start_day to end_day inclusive, ONE feed call per league (not one per day)."""
     d0, d1 = datetime.strptime(start_day, "%Y-%m-%d"), datetime.strptime(end_day, "%Y-%m-%d")
     out = []
@@ -122,7 +127,9 @@ def _espn_finished_between(start_day, end_day):
             except (TypeError, ValueError, AttributeError):
                 continue
             h, a = _team(home), _team(away)
-            if h["id"] and a["id"]:
+            if by_name and h["name"] and a["name"]:
+                out.append({"h": norm_team(h["name"]), "a": norm_team(a["name"]), "hs": hs, "as": aws})
+            elif h["id"] and a["id"]:
                 out.append({"h": h["id"], "a": a["id"], "hs": hs, "as": aws})
     return out
 
@@ -338,6 +345,6 @@ def get_games_on(day):
 
 
 def get_finished_between(start_day, end_day):
-    if _STATE["source"] == "apisports":  # one call per day on API-Sports: let the pipeline use its budgeted day-by-day path
-        raise RuntimeError("API-Sports history is read day by day")
-    return _espn_finished_between(start_day, end_day)
+    # API-Sports free plans cannot read past dates, so team form always comes from ESPN's results (NBA / WNBA).
+    # When games come from API-Sports the teams are matched by name (team ids differ between the two sources).
+    return _espn_finished_between(start_day, end_day, by_name=_STATE["source"] == "apisports")

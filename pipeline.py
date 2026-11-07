@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import engine
 import store
 from agents import ask_json, scrub
-from basketball_data import (get_today_games, get_games_range, get_finished_between, last_source, get_odds as basketball_odds,
+from basketball_data import (get_today_games, get_games_range, get_finished_between, last_source, norm_team, get_odds as basketball_odds,
                              get_team_statistics, get_games_on)
 from football_data import (get_today_matches, get_matches_range, get_finished_matches, get_lagos_date,
                            to_lagos_hhmm, aps_key, aps_fixtures, aps_prediction, aps_odds)
@@ -399,7 +399,7 @@ def _bb_day_results(day):
 
 def _bb_history_range(date):
     """The whole recent-results window in ONE call, cached 6 hours (works even when the cache is not persistent)."""
-    key = f"guru:bbhist:{date}"
+    key = f"guru:bbhist:{date}:{last_source()[0]}"
     hit = store.get_json(key)
     if hit is None:
         today = datetime.strptime(date, "%Y-%m-%d").date()
@@ -511,8 +511,12 @@ def collect_basketball(date, days=1):
                 history, stats_left, f, err = _bb_history(date, stats_left)
                 stats_failed += f
                 stats_err = err or stats_err
-            profiles = {tid: engine.basketball_profile_from_games(tid, history)
-                        for tid in (s["home_id"], s["away_id"])}
+            if last_source()[0] == "apisports":  # history comes from ESPN: match the teams by name
+                profiles = {tid: engine.basketball_profile_from_games(norm_team(name), history)
+                            for tid, name in ((s["home_id"], s["home"]), (s["away_id"], s["away"]))}
+            else:
+                profiles = {tid: engine.basketball_profile_from_games(tid, history)
+                            for tid in (s["home_id"], s["away_id"])}
         model = engine.basketball_model(profiles.get(s["home_id"]), profiles.get(s["away_id"]))
         if not model:
             continue
