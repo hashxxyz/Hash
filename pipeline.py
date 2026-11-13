@@ -71,14 +71,14 @@ PRIORITY_LEAGUES = {(n.lower(), c.lower()) for n, c in [
     ("Scottish Premiership", "Scotland"), ("Major League Soccer", "USA")]}
 # National-team and African competitions matched by keyword, because API-Sports names vary
 # ("UEFA Nations League", "Africa Cup of Nations - Qualification", "CAF Champions League", ...).
-FIRST_KEYWORDS = ("nations league", "africa cup of nations", "afcon", "caf ")
-SECOND_KEYWORDS = ("world cup", "euro championship", "uefa euro", "copa america", "qualification")
+FIRST_KEYWORDS = ("uefa nations league", "africa cup of nations", "afcon")
+SECOND_KEYWORDS = ("concacaf nations league", "world cup", "euro championship", "uefa euro", "copa america", "qualification")
 
 
 def league_rank(league, country):
-    """0 = Nations League / AFCON / CAF, 1 = big leagues + other qualifiers, 2 = friendlies and everything else."""
+    """0 = UEFA Nations League / AFCON / CAF, 1 = big leagues, CONCACAF Nations League, other qualifiers, 2 = the rest."""
     name = str(league or "").lower()
-    if any(k in name for k in FIRST_KEYWORDS):
+    if name.startswith("caf ") or any(k in name for k in FIRST_KEYWORDS):
         return 0
     if (name, str(country or "").lower()) in PRIORITY_LEAGUES or any(k in name for k in SECOND_KEYWORDS):
         return 1
