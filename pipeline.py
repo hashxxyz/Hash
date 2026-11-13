@@ -70,17 +70,19 @@ PRIORITY_LEAGUES = {(n.lower(), c.lower()) for n, c in [
     ("2. Bundesliga", "Germany"), ("Ligue 2", "France"), ("Jupiler Pro League", "Belgium"),
     ("Scottish Premiership", "Scotland"), ("Major League Soccer", "USA")]}
 # National-team and African competitions matched by keyword, because API-Sports names vary
-# ("UEFA Nations League", "Africa Cup of Nations - Qualification", "World Cup - Qualification CAF", ...).
-PRIORITY_KEYWORDS = ("nations league", "africa cup of nations", "afcon", "caf ", "world cup", "euro championship",
-                     "uefa euro", "copa america", "qualification", "friendlies")
+# ("UEFA Nations League", "Africa Cup of Nations - Qualification", "CAF Champions League", ...).
+FIRST_KEYWORDS = ("nations league", "africa cup of nations", "afcon", "caf ")
+SECOND_KEYWORDS = ("world cup", "euro championship", "uefa euro", "copa america", "qualification")
 
 
 def league_rank(league, country):
-    """0 = scanned first (big leagues + international/African competitions), 1 = the rest."""
+    """0 = Nations League / AFCON / CAF, 1 = big leagues + other qualifiers, 2 = friendlies and everything else."""
     name = str(league or "").lower()
-    if (name, str(country or "").lower()) in PRIORITY_LEAGUES or any(k in name for k in PRIORITY_KEYWORDS):
+    if any(k in name for k in FIRST_KEYWORDS):
         return 0
-    return 1
+    if (name, str(country or "").lower()) in PRIORITY_LEAGUES or any(k in name for k in SECOND_KEYWORDS):
+        return 1
+    return 2
 
 
 PRIORITY_BASKETBALL = {"nba", "euroleague", "eurocup", "wnba", "liga acb", "acb", "nbl", "lnb", "bbl", "bsl",
@@ -319,6 +321,9 @@ def collect_football_aps(date, days=1, skip=frozenset()):
                 failed += 1
                 last_err = scrub(e)[:160]
                 print("API-FOOTBALL PREDICTION ERROR:", last_err)
+                if "per-minute" in last_err:  # limit hit: stop here, cached results make the next scan go further
+                    notes.append("API-Football per-minute limit reached; run the scan again in a minute to cover more matches.")
+                    break
                 continue
             store.set_json(pk, pred, PREDICTION_CACHE_SECONDS)
         model = engine.football_model(pred)
